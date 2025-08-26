@@ -202,6 +202,38 @@ environment:
   - CHROME_BIN=/usr/bin/google-chrome
 ```
 
+### Running on Apify
+
+eGet can run as an [Apify](https://apify.com) actor. The actor expects a JSON input with the following fields:
+
+- `url` *(string)* – starting page to scrape or crawl.
+- `options` *(object)* – scraper options passed to the underlying API (for example, output formats or wait settings).
+- `max_concurrent` *(integer)* – maximum number of parallel pages to process.
+
+Example input:
+
+```json
+{
+  "url": "https://example.com",
+  "options": {
+    "formats": ["markdown"],
+    "onlyMainContent": true
+  },
+  "max_concurrent": 5
+}
+```
+
+#### Triggering a run
+
+Runs can be started from the Apify Console by clicking **Run** on the actor and supplying the JSON input above.
+You can also trigger runs via the API:
+
+```bash
+curl -X POST "https://api.apify.com/v2/acts/<USERNAME>~<ACTOR-NAME>/run-sync?token=YOUR_APIFY_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"url":"https://example.com","options":{},"max_concurrent":5}'
+```
+
 ## 📝 API Usage Examples
 
 ### Single Page Scraping

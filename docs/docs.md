@@ -432,6 +432,32 @@ Minimum recommended specifications:
    - Disable unnecessary features
    - Regular security updates
 
+### Running on Apify
+
+The project can be deployed as an Apify actor. Provide input using the following fields:
+
+- `url` – starting URL to scrape or crawl
+- `options` – configuration object passed to the scraper
+- `max_concurrent` – maximum number of parallel pages
+
+Example input:
+
+```json
+{
+  "url": "https://example.com",
+  "options": {"formats": ["markdown"]},
+  "max_concurrent": 5
+}
+```
+
+Trigger runs from the Apify Console or via HTTP API:
+
+```bash
+curl -X POST "https://api.apify.com/v2/acts/<USERNAME>~<ACTOR-NAME>/run-sync?token=YOUR_APIFY_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"url":"https://example.com","options":{},"max_concurrent":5}'
+```
+
 ## Monitoring
 
 ### Prometheus Metrics
