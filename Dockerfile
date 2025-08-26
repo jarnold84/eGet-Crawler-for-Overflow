@@ -1,5 +1,5 @@
-# Use slim-buster for smaller size but still Debian-based
-FROM python:3.9-slim-buster
+# Use slim-buster for smaller size but still Debian-based. note: bookworm is the current stable Debian release
+FROM python:3.9-slim-bookworm
 
 # Install system dependencies and Chrome
 RUN apt-get update && apt-get install -y \
