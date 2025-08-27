@@ -6,26 +6,29 @@
     "url": {
       "title": "Start URL",
       "type": "string",
-      "description": "The URL to start crawling from (e.g., faculty page or directory).",
-      "default": ""
+      "description": "The URL to start crawling from (e.g., faculty page).",
+      "editor": "textfield"
     },
     "maxDepth": {
       "title": "Max Depth",
       "type": "integer",
+      "description": "How deep to crawl (e.g., 1 = follow links to profiles).",
       "default": 2,
-      "description": "How deep to crawl (e.g., 1 = follow links to profiles)."
+      "editor": "number"
     },
     "maxPages": {
       "title": "Max Pages",
       "type": "integer",
+      "description": "Maximum number of pages to crawl.",
       "default": 50,
-      "description": "Maximum number of pages to crawl."
+      "editor": "number"
     },
     "campaign": {
       "title": "Campaign Name",
       "type": "string",
+      "description": "Choose a scraping rule set (e.g., university_faculty, music_festival).",
       "default": "default",
-      "description": "Used to select a set of scraping rules (e.g., university_faculty)."
+      "editor": "textfield"
     }
   },
   "required": ["url"]
