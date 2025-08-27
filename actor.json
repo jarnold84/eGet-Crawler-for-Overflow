@@ -2,7 +2,6 @@
   "name": "eget-crawler-overflow",
   "version": "0.1",
   "dockerfile": "Dockerfile",
-  "startCommand": "python run.py",
   "defaultRunOptions": {
     "memoryMbytes": 2048,
     "timeoutSecs": 3600
