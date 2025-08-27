@@ -15,7 +15,10 @@ class CrawledPage(BaseModel):
     """Model for individual crawled page data"""
     url: HttpUrl
     markdown: str
+    html: Optional[str] = None
+    raw_html: Optional[str] = None
     structured_data: Dict[str, Any]
+    domain: Optional[str] = None
     scrape_id: UUID
     crawled_at: datetime = Field(default_factory=datetime.utcnow)
     depth: int = Field(ge=0)
@@ -57,16 +60,12 @@ class CrawlerResponse(BaseModel):
                 "status": "completed",
                 "pages": [
                     {
-                        "url": "https://example.com",
-                        "markdown": "# Example Page\nContent here...",
-                        "metadata": {
-                            "title": "Example Page",
-                            "description": "An example page",
-                            "language": "en",
-                            "sourceURL": "https://example.com",
-                            "url": "https://example.com",
-                            "statusCode": 200
-                        },
+                        "url": "https://example.com/about",
+                        "domain": "example.com",
+                        "markdown": "# About Us\nContent here...",
+                        "html": "<h1>About Us</h1><p>Content here...</p>",
+                        "raw_html": "<!doctype html><html>...</html>",
+                        "structured_data": {"title": "About Us"},
                         "scrape_id": "123e4567-e89b-12d3-a456-426614174001",
                         "depth": 0
                     }

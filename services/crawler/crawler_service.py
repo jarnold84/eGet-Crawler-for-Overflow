@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 from loguru import logger
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 from services.scraper.scraper import WebScraper
 from .link_extractor import LinkExtractor
@@ -42,7 +43,7 @@ class CrawlerService:
                 url,
                 {
                     "only_main": True,
-                    "include_raw_html": False,
+                    "include_raw_html": True,
                     "include_screenshot": False
                 }
             )
@@ -52,7 +53,10 @@ class CrawlerService:
                 page = CrawledPage(
                     url=url,
                     markdown=scrape_result["data"]["markdown"],
+                    html=scrape_result["data"].get("html"),
+                    raw_html=scrape_result["data"].get("rawHtml"),
                     structured_data=scrape_result["data"].get("structured_data"),
+                    domain=urlparse(url).netloc,
                     scrape_id=uuid.uuid4(),
                     depth=depth,
                 )

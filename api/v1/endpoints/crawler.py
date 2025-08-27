@@ -17,7 +17,7 @@ async def start_crawl(request: CrawlerRequest):
         request (CrawlerRequest): Crawl request parameters
         
     Returns:
-        List[Dict[str, str]]: List of crawled pages with URLs and markdown content
+        List[Dict[str, Any]]: List of crawled pages with URLs, text and HTML content
     """
     try:
         logger.info(f"Starting new crawl for URL: {request.url}")
@@ -30,12 +30,15 @@ async def start_crawl(request: CrawlerRequest):
                 detail=f"Crawl failed with status: {results.status}. Error: {results.error}"
             )
         
-        # Transform to simplified format
+        # Transform to simplified format including HTML and domain
         full_results = [
             {
                 "url": str(page.url),
+                "domain": page.domain,
                 "markdown": page.markdown,
-                "structured_data": page.structured_data  # Only include structured_data
+                "html": page.html,
+                "raw_html": page.raw_html,
+                "structured_data": page.structured_data,
             }
             for page in results.pages
         ]
