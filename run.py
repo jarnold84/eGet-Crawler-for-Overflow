@@ -1,20 +1,18 @@
-import json
 import os
-import requests
+import json
+import uvicorn
 
 def main():
-    # Load Apify input
-    with open('/apify/input.json') as f:
-        data = json.load(f)
+    input_path = "/apify/input.json"
+    if os.path.exists(input_path):
+        with open(input_path) as f:
+            input_data = json.load(f)
+        print(f"Received Apify input: {input_data}")
+    else:
+        print("No input.json found. Proceeding without input.")
 
-    url = data.get("url")
-    if not url:
-        print("No URL provided.")
-        return
-
-    # Call your own API
-    response = requests.post("http://localhost:8000/api/v1/crawl", json=data)
-    print("Crawl response:", response.status_code, response.text)
+    # Start FastAPI app
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
     main()
