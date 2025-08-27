@@ -163,6 +163,8 @@ Request Body:
 }
 ```
 
+If `include_patterns` is omitted, the crawler targets common high-signal routes by default (e.g., `/about`, `/team`, `/faculty`, `/contact`, `/services`).
+
 Response:
 ```json
 [
@@ -363,6 +365,7 @@ def crawl_site():
             r"\/api\/.*",
             r".*\.(jpg|jpeg|png|gif)$"
         ],
+        # include_patterns is optional; built-in defaults cover /about, /team, /contact, etc.
         "include_patterns": [
             r"\/blog\/.*",
             r"\/docs\/.*"

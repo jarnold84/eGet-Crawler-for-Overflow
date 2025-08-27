@@ -7,22 +7,49 @@ import robotexclusionrulesparser
 import requests
 from models.crawler_request import CrawlerRequest
 
+# Default patterns for high-signal routes when none are provided
+HIGH_SIGNAL_PATTERNS = [
+    r"/about",
+    r"/team",
+    r"/people",
+    r"/faculty",
+    r"/staff",
+    r"/leadership",
+    r"/directory",
+    r"/contact",
+    r"/services",
+    r"/book",
+    r"/weddings",
+    r"/events",
+    r"/portfolio",
+    r"/gallery",
+    r"/publications",
+    r"/artists",
+    r"/performances",
+]
+
+
 class LinkExtractor:
     """
     Extracts and validates links from HTML content.
     Handles URL normalization, filtering, and robots.txt compliance.
     """
-    
+
     def __init__(self, request: CrawlerRequest):
         """
         Initialize the LinkExtractor with crawler request settings.
-        
+
         Args:
             request (CrawlerRequest): The crawler request containing settings
         """
         self.base_domain = urlparse(str(request.url)).netloc
-        self.exclude_patterns = [re.compile(p) for p in request.exclude_patterns] if request.exclude_patterns else []
-        self.include_patterns = [re.compile(p) for p in request.include_patterns] if request.include_patterns else []
+        self.exclude_patterns = (
+            [re.compile(p) for p in request.exclude_patterns]
+            if request.exclude_patterns
+            else []
+        )
+        patterns = request.include_patterns or HIGH_SIGNAL_PATTERNS
+        self.include_patterns = [re.compile(p) for p in patterns]
         self.respect_robots = request.respect_robots_txt
         self._robots_parser = robotexclusionrulesparser.RobotExclusionRulesParser()
         self._load_robots_txt(str(request.url))
@@ -50,17 +77,17 @@ class LinkExtractor:
         try:
             # Convert to absolute URL
             absolute_url = urljoin(base_url, url)
-            
+
             # Parse URL
             parsed = urlparse(absolute_url)
-            
+
             # Basic normalization
             normalized = parsed._replace(
                 fragment="",  # Remove fragments
-                params="",    # Remove params
-                query=""     # Remove query string
+                params="",  # Remove params
+                query="",  # Remove query string
             ).geturl()
-            
+
             return normalized
         except Exception as e:
             logger.debug(f"URL normalization failed for {url}: {e}")
@@ -69,10 +96,10 @@ class LinkExtractor:
     def _should_include_url(self, url: str) -> bool:
         """
         Check if URL should be included based on patterns and domain.
-        
+
         Args:
             url (str): URL to check
-            
+
         Returns:
             bool: True if URL should be included
         """
@@ -94,30 +121,31 @@ class LinkExtractor:
     def extract_links(self, html: str, base_url: str) -> Set[str]:
         """
         Extract valid links from HTML content.
-        
+
         Args:
             html (str): HTML content to parse
             base_url (str): Base URL for resolving relative links
-            
+
         Returns:
             Set[str]: Set of valid, normalized URLs
         """
         valid_links: Set[str] = set()
         try:
-            soup = BeautifulSoup(html, 'html.parser')
-            
+            soup = BeautifulSoup(html, "html.parser")
+
             # Find all links
-            for link in soup.find_all('a', href=True):
-                url = link['href']
-                
+            for link in soup.find_all("a", href=True):
+                url = link["href"]
+
                 # Normalize URL
                 normalized_url = self._normalize_url(url, base_url)
                 if not normalized_url:
                     continue
 
                 # Apply all filters
-                if (self._should_include_url(normalized_url) and 
-                    self._is_allowed_by_robots(normalized_url)):
+                if self._should_include_url(
+                    normalized_url
+                ) and self._is_allowed_by_robots(normalized_url):
                     valid_links.add(normalized_url)
 
         except Exception as e:

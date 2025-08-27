@@ -273,6 +273,7 @@ def crawl_site_for_rag() -> List[Dict]:
             r"\/tag\/.*",  # Skip tag pages
             r"\/author\/.*"  # Skip author pages
         ],
+        # include_patterns is optional; built-in defaults cover /about, /team, /contact, etc.
         "include_patterns": [
             r"\/blog\/.*",  # Focus on blog content
             r"\/docs\/.*"   # And documentation
