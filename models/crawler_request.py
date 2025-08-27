@@ -1,5 +1,5 @@
 from pydantic import BaseModel, HttpUrl, validator, Field
-from typing import Optional, List, Pattern
+from typing import Optional, List
 import re
 from uuid import UUID, uuid4
 
@@ -15,6 +15,8 @@ class CrawlerRequest(BaseModel):
         include_patterns (List[str]): URL patterns to specifically include
         respect_robots_txt (bool): Whether to respect robots.txt rules
         crawl_id (UUID): Unique identifier for the crawl request
+        render_engine (str): Rendering engine to use (requests, selenium, playwright)
+        wait_for_selector (str): CSS selector to wait for when rendering pages
     """
     url: HttpUrl
     max_depth: Optional[int] = Field(default=3, ge=1, le=10, description="Maximum depth to crawl")
@@ -22,6 +24,8 @@ class CrawlerRequest(BaseModel):
     exclude_patterns: Optional[List[str]] = Field(default=[], description="URL patterns to exclude")
     include_patterns: Optional[List[str]] = Field(default=[], description="URL patterns to specifically include")
     respect_robots_txt: Optional[bool] = Field(default=True, description="Whether to respect robots.txt")
+    render_engine: Optional[str] = Field(default=None, description="Rendering engine: requests, selenium, or playwright")
+    wait_for_selector: Optional[str] = Field(default=None, description="CSS selector to wait for during rendering")
     crawl_id: UUID = Field(default_factory=uuid4, description="Unique identifier for the crawl")
 
     @validator('exclude_patterns', 'include_patterns')
@@ -43,6 +47,8 @@ class CrawlerRequest(BaseModel):
                 "max_pages": 100,
                 "exclude_patterns": [r"\/api\/.*", r".*\.(jpg|jpeg|png|gif)$"],
                 "include_patterns": [r"\/blog\/.*", r"\/docs\/.*"],
-                "respect_robots_txt": True
+                "respect_robots_txt": True,
+                "render_engine": "playwright",
+                "wait_for_selector": "main"
             }
         }

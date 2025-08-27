@@ -43,7 +43,9 @@ class CrawlerService:
                 {
                     "only_main": True,
                     "include_raw_html": False,
-                    "include_screenshot": False
+                    "include_screenshot": False,
+                    "render_engine": request.render_engine,
+                    "wait_for_selector": request.wait_for_selector
                 }
             )
             

@@ -20,6 +20,7 @@ import time
 import tempfile
 import uuid
 import os
+from playwright.async_api import async_playwright
 from core.exceptions import BrowserError
 from core.config import get_settings
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -689,6 +690,12 @@ class WebScraper:
         return instance
     
     async def _get_page_content(self, url: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        engine = options.get('render_engine')
+        if not engine and options.get('wait_for_selector'):
+            engine = 'playwright'
+        if engine == 'playwright':
+            return await self._get_page_content_playwright(url, options)
+
         context = await self.browser_pool.get_browser()
         try:
             await context.navigate(url, timeout=options.get('timeout', 30))
@@ -724,6 +731,36 @@ class WebScraper:
 
         finally:
             await self.browser_pool.release_browser(context)
+
+    async def _get_page_content_playwright(self, url: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        timeout_ms = int(options.get('timeout', 30)) * 1000
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(url, timeout=timeout_ms)
+            if options.get('wait_for_selector'):
+                await page.wait_for_selector(options['wait_for_selector'], timeout=timeout_ms)
+
+            content = await page.content()
+
+            screenshot = None
+            if options.get('include_screenshot'):
+                screenshot = await page.screenshot(full_page=True)
+
+            links = await page.eval_on_selector_all(
+                "a",
+                "els => els.map(a => ({href: a.href, text: a.textContent.trim(), rel: a.rel}))"
+            )
+            await browser.close()
+
+            return {
+                'content': content,
+                'raw_content': content if options.get('include_raw_html') else None,
+                'status': 200,
+                'screenshot': screenshot,
+                'links': links,
+                'headers': {},
+            }
 
     async def _release_browser(self, browser: webdriver.Chrome):
         """Separate browser release method"""
