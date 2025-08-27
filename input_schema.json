@@ -6,28 +6,27 @@
     "url": {
       "title": "Start URL",
       "type": "string",
-      "description": "The URL to start crawling from (e.g., faculty page, directory).",
+      "description": "The URL to start crawling from (e.g., faculty page or directory).",
       "default": ""
     },
     "maxDepth": {
       "title": "Max Depth",
       "type": "integer",
       "default": 2,
-      "description": "How deep to crawl (0 = single page, 1 = profile links, etc)."
+      "description": "How deep to crawl (e.g., 1 = follow links to profiles)."
     },
     "maxPages": {
       "title": "Max Pages",
       "type": "integer",
       "default": 50,
-      "description": "Limit the number of pages crawled in total."
+      "description": "Maximum number of pages to crawl."
     },
     "campaign": {
       "title": "Campaign Name",
       "type": "string",
       "default": "default",
-      "description": "Used to load selector pack (e.g., 'university_faculty', 'music_festivals')."
+      "description": "Used to select a set of scraping rules (e.g., university_faculty)."
     }
   },
   "required": ["url"]
 }
-git add input_schema.json
