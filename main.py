@@ -24,10 +24,11 @@ metrics_app = make_asgi_app()
 async def lifespan(app: FastAPI):
     """Lifecycle events for the application"""
 
-    cache_service = CacheService(settings.REDIS_URL)
-
+    cache_service: CacheService | None = None
     try:
         logger.info("Initializing application...")
+
+        cache_service = CacheService(settings.REDIS_URL)
         await cache_service.connect()
 
         logger.info("Initializing scraper...")
@@ -48,7 +49,8 @@ async def lifespan(app: FastAPI):
     finally:
         logger.info("Shutting down application...")
         await app.state.scraper.cleanup()
-        await cache_service.disconnect()
+        if cache_service is not None:
+            await cache_service.disconnect()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
