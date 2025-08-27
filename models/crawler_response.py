@@ -15,6 +15,8 @@ class CrawledPage(BaseModel):
     """Model for individual crawled page data"""
     url: HttpUrl
     markdown: str
+    html: Optional[str] = None
+    raw_html: Optional[str] = None
     structured_data: Dict[str, Any]
     scrape_id: UUID
     crawled_at: datetime = Field(default_factory=datetime.utcnow)
@@ -59,6 +61,8 @@ class CrawlerResponse(BaseModel):
                     {
                         "url": "https://example.com",
                         "markdown": "# Example Page\nContent here...",
+                        "html": "<html>Example Page</html>",
+                        "raw_html": "<html>Example Page</html>",
                         "metadata": {
                             "title": "Example Page",
                             "description": "An example page",

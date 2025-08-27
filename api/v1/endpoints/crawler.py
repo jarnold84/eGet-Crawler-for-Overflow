@@ -33,9 +33,10 @@ async def start_crawl(request: CrawlerRequest):
         # Transform to simplified format
         full_results = [
             {
-                "url": str(page.url),
-                "markdown": page.markdown,
-                "structured_data": page.structured_data  # Only include structured_data
+                "pageUrl": str(page.url),
+                "pageText": page.markdown,
+                "rawHTML": page.raw_html,
+                "structured_data": page.structured_data,
             }
             for page in results.pages
         ]

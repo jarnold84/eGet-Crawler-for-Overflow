@@ -41,8 +41,8 @@ class CrawlerService:
             scrape_result = await self.scraper.scrape(
                 url,
                 {
-                    "only_main": True,
-                    "include_raw_html": False,
+                    "only_main": False,
+                    "include_raw_html": True,
                     "include_screenshot": False
                 }
             )
@@ -52,6 +52,8 @@ class CrawlerService:
                 page = CrawledPage(
                     url=url,
                     markdown=scrape_result["data"]["markdown"],
+                    html=scrape_result["data"].get("html"),
+                    raw_html=scrape_result["data"].get("rawHtml"),
                     structured_data=scrape_result["data"].get("structured_data"),
                     scrape_id=uuid.uuid4(),
                     depth=depth,
