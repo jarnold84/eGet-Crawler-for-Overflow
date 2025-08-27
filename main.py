@@ -22,14 +22,13 @@ metrics_app = make_asgi_app()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifecycle events for the application."""
-
-    cache_service = CacheService(settings.REDIS_URL)
+    """Lifecycle events for the application"""
 
     try:
         # Startup
         logger.info("Initializing application...")
 
+        cache_service = CacheService(settings.REDIS_URL)
         await cache_service.connect()
 
         # Initialize resources with cache service
