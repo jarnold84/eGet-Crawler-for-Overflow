@@ -1,6 +1,30 @@
 {
-  "url": "https://example.com/faculty",
-  "max_depth": 2,
-  "max_pages": 5,
-  "campaign": "test"
+  "title": "eGet Overflow Scraper Input",
+  "type": "object",
+  "properties": {
+    "url": {
+      "title": "Start URL",
+      "type": "string",
+      "description": "The URL to begin scraping from."
+    },
+    "max_depth": {
+      "title": "Maximum Depth",
+      "type": "integer",
+      "default": 2,
+      "description": "How deep the crawler should go when following links."
+    },
+    "max_pages": {
+      "title": "Maximum Pages",
+      "type": "integer",
+      "default": 5,
+      "description": "How many pages the crawler should process before stopping."
+    },
+    "campaign": {
+      "title": "Campaign Name",
+      "type": "string",
+      "default": "test",
+      "description": "A name tag for identifying this run."
+    }
+  },
+  "required": ["url"]
 }
