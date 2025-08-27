@@ -10,46 +10,46 @@ from contextlib import asynccontextmanager
 from prometheus_client import make_asgi_app
 
 from core.config import settings
+from loguru import logger
+logger.info(f"Loaded user agent: {settings.DEFAULT_USER_AGENT}")
 from core.exceptions import ScraperException, ValidationError
 from models.request import ScrapeRequest
 from services.cache.cache_service import CacheService
 from services.scraper.scraper import WebScraper
-from services.crawler.crawler_service import CrawlerService 
-from api.v1.endpoints import crawler, scraper , chunker , converter  
+from services.crawler.crawler_service import CrawlerService
+from api.v1.endpoints import crawler, scraper, chunker, converter
 
 # Prometheus metrics endpoint
 metrics_app = make_asgi_app()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle events for the application"""
     try:
-        # Startup
         logger.info("Initializing application...")
-        
-        # Initialize cache service
+
         cache_service = CacheService(settings.REDIS_URL)
         await cache_service.connect()
-        
-        # Initialize resources with cache service
-        logger.info("Initializing scraper...")
+
         app.state.scraper = await WebScraper.create(
             max_concurrent=settings.CONCURRENT_SCRAPES,
             cache_service=cache_service
         )
-        
-        logger.info("Initializing crawler...")
-        app.state.crawler = CrawlerService(max_concurrent=settings.CONCURRENT_SCRAPES)
-        
+
+        app.state.crawler = CrawlerService(
+            max_concurrent=settings.CONCURRENT_SCRAPES
+        )
+
         yield
-        
-        # Shutdown
+
         logger.info("Shutting down application...")
         await app.state.scraper.cleanup()
-        
+
     except Exception as e:
         logger.exception(f"Application lifecycle error: {str(e)}")
         raise
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -69,34 +69,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(
-    crawler.router,
-    prefix="/api/v1",
-    tags=["crawler"]
-)
-
-app.include_router(
-    scraper.router,
-    prefix="/api/v1",
-    tags=["scraper"] 
-)
-
-app.include_router(
-    chunker.router,
-    prefix="/api/v1",
-    tags=["chunker"]
-)
-
-app.include_router(
-    converter.router,
-    prefix="/api/v1",
-    tags=["converter"]
-)
-
 app.add_middleware(
-    TrustedHostMiddleware, 
+    TrustedHostMiddleware,
     allowed_hosts=settings.ALLOWED_HOSTS
 )
+
+# Routers
+app.include_router(crawler.router, prefix="/api/v1", tags=["crawler"])
+app.include_router(scraper.router, prefix="/api/v1", tags=["scraper"])
+app.include_router(chunker.router, prefix="/api/v1", tags=["chunker"])
+app.include_router(converter.router, prefix="/api/v1", tags=["converter"])
 
 # Custom middleware for request timing
 @app.middleware("http")
@@ -147,9 +129,9 @@ async def health_check():
         "timestamp": time.time()
     }
 
+# Root endpoint
 @app.get("/")
 async def root():
-    """Root endpoint with API information"""
     return {
         "name": settings.PROJECT_NAME,
         "version": "1.0.0",
@@ -158,13 +140,11 @@ async def root():
         "health_check": "/health"
     }
 
+# Scrape endpoint
 @app.post("/scrape", response_model_exclude_none=True)
 async def scrape_url(request: ScrapeRequest, req: Request):
-    """
-    Scrape a URL and return processed content
-    """
     logger.info(f"Processing scrape request for URL: {request.url}")
-    
+
     options = {
         "only_main": request.onlyMainContent,
         "timeout": request.timeout or settings.TIMEOUT,
@@ -174,13 +154,14 @@ async def scrape_url(request: ScrapeRequest, req: Request):
         "screenshot_quality": settings.SCREENSHOT_QUALITY,
         "wait_for_selector": request.waitFor
     }
-    
+
     if request.actions:
         options["actions"] = request.actions
-    
+
     result = await req.app.state.scraper.scrape(str(request.url), options)
     return result
 
+# Uvicorn entry point
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",

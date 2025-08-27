@@ -1,11 +1,22 @@
-X{
-  "name": "Python 3.11 + SSL",
-  "image": "mcr.microsoft.com/devcontainers/python:3.11",
-  "features": {
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.11"
+{
+  "name": "eGet-Crawler",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/bin/python3"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
     }
   },
-  "postCreateCommand": "pip install -r requirements.txt"
+
+  "postCreateCommand": "pip install --upgrade pip && pip install -r requirements.txt",
+
+  "features": {},
+
+  "remoteUser": "vscode"
 }
-mkdir -p .devcontainer

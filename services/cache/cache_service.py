@@ -1,5 +1,5 @@
 from typing import Optional, Any, Dict
-import aioredis
+import redis.asyncio as aioredis
 import json
 import hashlib
 from datetime import timedelta
