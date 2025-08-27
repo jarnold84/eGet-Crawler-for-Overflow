@@ -94,13 +94,13 @@ class QueueManager:
     @property
     def is_complete(self) -> bool:
         """Check if crawling is complete"""
-        return not self.queue and not self.in_progress
+        return self.queue.empty() and not self.in_progress
 
     @property
     def stats(self) -> Dict:
         """Get current queue statistics"""
         return {
-            "queued": len(self.queue),
+            "queued": self.queue.qsize(),
             "in_progress": len(self.in_progress),
             "total_seen": len(self.seen_urls)
         }
