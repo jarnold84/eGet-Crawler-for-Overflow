@@ -1,0 +1,6 @@
+{
+  "url": "https://example.com/faculty",
+  "max_depth": 2,
+  "max_pages": 5,
+  "campaign": "test"
+}
