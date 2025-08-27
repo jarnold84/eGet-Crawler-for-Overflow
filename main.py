@@ -24,13 +24,15 @@ metrics_app = make_asgi_app()
 async def lifespan(app: FastAPI):
     """Lifecycle events for the application."""
 
-    # Startup
-    logger.info("Initializing application...")
-
     cache_service = CacheService(settings.REDIS_URL)
-    await cache_service.connect()
 
     try:
+        # Startup
+        logger.info("Initializing application...")
+
+        await cache_service.connect()
+
+        # Initialize resources with cache service
         logger.info("Initializing scraper...")
         app.state.scraper = await WebScraper.create(
             max_concurrent=settings.CONCURRENT_SCRAPES,
