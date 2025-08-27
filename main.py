@@ -23,33 +23,36 @@ metrics_app = make_asgi_app()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle events for the application"""
+
     try:
         # Startup
         logger.info("Initializing application...")
-        
-        # Initialize cache service
+
         cache_service = CacheService(settings.REDIS_URL)
         await cache_service.connect()
-        
+
         # Initialize resources with cache service
         logger.info("Initializing scraper...")
         app.state.scraper = await WebScraper.create(
             max_concurrent=settings.CONCURRENT_SCRAPES,
-            cache_service=cache_service
+            cache_service=cache_service,
         )
-        
+
         logger.info("Initializing crawler...")
-        app.state.crawler = CrawlerService(max_concurrent=settings.CONCURRENT_SCRAPES)
-        
+        app.state.crawler = CrawlerService(
+            max_concurrent=settings.CONCURRENT_SCRAPES
+        )
+
         yield
-        
-        # Shutdown
-        logger.info("Shutting down application...")
-        await app.state.scraper.cleanup()
-        
+
     except Exception as e:
         logger.exception(f"Application lifecycle error: {str(e)}")
         raise
+
+    finally:
+        # Shutdown
+        logger.info("Shutting down application...")
+        await app.state.scraper.cleanup()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
