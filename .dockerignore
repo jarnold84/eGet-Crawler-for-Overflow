@@ -1,0 +1,60 @@
+# Ignore Git repository metadata
+.git
+.gitignore
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Environment variables and local config
+.env
+.env.*
+*.env
+
+# Logs
+*.log
+logs/
+log/
+
+# Docker and compose files
+.docker/
+docker-compose.yml
+docker-compose.dev.yml
+docker-compose.prod.yml
+
+# Documentation and examples
+cookbook/
+docs/
+
+# Node modules
+node_modules/
+
+# Test and coverage artifacts
+htmlcov/
+.coverage
+.coverage.*
+.cache
+pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Local data folders
+prometheus_data/
+redis_data/
+data/
+datasets/
+
+# Other non-essential files
+*.swp
+*.swo
+*.swn
+.DS_Store
