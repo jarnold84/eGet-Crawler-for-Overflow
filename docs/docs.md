@@ -159,7 +159,8 @@ Request Body:
     "\\/blog\\/.*",
     "\\/docs\\/.*"
   ],
-  "respect_robots_txt": true
+  "respect_robots_txt": true,
+  "wait_for_selector": ".main-content"
 }
 ```
 
@@ -366,7 +367,8 @@ def crawl_site():
         "include_patterns": [
             r"\/blog\/.*",
             r"\/docs\/.*"
-        ]
+        ],
+        "wait_for_selector": ".main-content"
     }
     
     response = requests.post(url, json=payload)

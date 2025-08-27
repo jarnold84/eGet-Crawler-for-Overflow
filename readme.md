@@ -277,7 +277,8 @@ def crawl_site_for_rag() -> List[Dict]:
             r"\/blog\/.*",  # Focus on blog content
             r"\/docs\/.*"   # And documentation
         ],
-        "respect_robots_txt": True
+        "respect_robots_txt": True,
+        "wait_for_selector": ".main-content"
     }
 
     response = requests.post(url, json=payload)
