@@ -1,5 +1,5 @@
 from typing import List, Set, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qsl, urlencode
 from bs4 import BeautifulSoup
 import re
 from loguru import logger
@@ -46,21 +46,23 @@ class LinkExtractor:
         return self._robots_parser.is_allowed("*", url)
 
     def _normalize_url(self, url: str, base_url: str) -> Optional[str]:
-        """Normalize URL to absolute form and clean it"""
+        """Normalize URL to absolute form while keeping pagination queries"""
         try:
-            # Convert to absolute URL
             absolute_url = urljoin(base_url, url)
-            
-            # Parse URL
             parsed = urlparse(absolute_url)
-            
-            # Basic normalization
+
+            # Filter query params to keep common pagination keys
+            query_params = parse_qsl(parsed.query, keep_blank_values=True)
+            allowed = {"page", "p", "start"}
+            filtered = [(k, v) for k, v in query_params if k in allowed]
+            query = urlencode(filtered, doseq=True)
+
             normalized = parsed._replace(
-                fragment="",  # Remove fragments
-                params="",    # Remove params
-                query=""     # Remove query string
+                fragment="",
+                params="",
+                query=query
             ).geturl()
-            
+
             return normalized
         except Exception as e:
             logger.debug(f"URL normalization failed for {url}: {e}")
@@ -91,7 +93,7 @@ class LinkExtractor:
 
         return True
 
-    def extract_links(self, html: str, base_url: str) -> Set[str]:
+    def extract_links(self, html: str, base_url: str) -> List[str]:
         """
         Extract valid links from HTML content.
         
@@ -100,27 +102,32 @@ class LinkExtractor:
             base_url (str): Base URL for resolving relative links
             
         Returns:
-            Set[str]: Set of valid, normalized URLs
+            List[str]: Ordered list of valid, normalized URLs
         """
-        valid_links: Set[str] = set()
+        seen: Set[str] = set()
+        profile_links: List[str] = []
+        pagination_links: List[str] = []
         try:
             soup = BeautifulSoup(html, 'html.parser')
-            
+
             # Find all links
             for link in soup.find_all('a', href=True):
                 url = link['href']
-                
-                # Normalize URL
+                rel_values = link.get('rel', [])
+
                 normalized_url = self._normalize_url(url, base_url)
-                if not normalized_url:
+                if not normalized_url or normalized_url in seen:
                     continue
 
-                # Apply all filters
-                if (self._should_include_url(normalized_url) and 
+                if (self._should_include_url(normalized_url) and
                     self._is_allowed_by_robots(normalized_url)):
-                    valid_links.add(normalized_url)
+                    if 'next' in [r.lower() for r in rel_values] or re.search(r'(?:page|p|start)=\d+', normalized_url):
+                        pagination_links.append(normalized_url)
+                    else:
+                        profile_links.append(normalized_url)
+                    seen.add(normalized_url)
 
         except Exception as e:
             logger.error(f"Error extracting links from {base_url}: {e}")
 
-        return valid_links
+        return profile_links + pagination_links
