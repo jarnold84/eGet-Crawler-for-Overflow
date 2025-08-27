@@ -1,4 +1,4 @@
-FROM apify/actor-node-playwright-chrome:16.0.0
+FROM apify/actor-node-playwright-chrome:beta
 
 WORKDIR /app
 
