@@ -5,15 +5,6 @@
   "startCommand": "python run.py",
   "defaultRunOptions": {
     "memoryMbytes": 2048,
-    "timeoutSecs": 3600,
-    "build": "latest"
-  },
-  "input": "json",
-  "inputSchema": "input_schema.json",
-  "mounts": [
-    {
-      "source": "input",
-      "destination": "/apify/input.json"
-    }
-  ]
+    "timeoutSecs": 3600
+  }
 }
