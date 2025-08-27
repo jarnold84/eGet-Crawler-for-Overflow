@@ -1,4 +1,4 @@
-from typing import List, Set, Optional
+from typing import List, Set, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import re
@@ -91,36 +91,45 @@ class LinkExtractor:
 
         return True
 
-    def extract_links(self, html: str, base_url: str) -> Set[str]:
+    def _is_pagination_link(self, url: str) -> bool:
+        """Basic heuristic to detect pagination links"""
+        return bool(re.search(r'(page=|/page/|pagination)', url, re.IGNORECASE))
+
+    def extract_links(self, html: str, base_url: str) -> Tuple[Set[str], Set[str]]:
         """
-        Extract valid links from HTML content.
-        
+        Extract valid links from HTML content and categorize into profile
+        and pagination links.
+
         Args:
             html (str): HTML content to parse
             base_url (str): Base URL for resolving relative links
-            
+
         Returns:
-            Set[str]: Set of valid, normalized URLs
+            Tuple[Set[str], Set[str]]: profile links, pagination links
         """
-        valid_links: Set[str] = set()
+        profile_links: Set[str] = set()
+        pagination_links: Set[str] = set()
         try:
             soup = BeautifulSoup(html, 'html.parser')
-            
+
             # Find all links
             for link in soup.find_all('a', href=True):
                 url = link['href']
-                
+
                 # Normalize URL
                 normalized_url = self._normalize_url(url, base_url)
                 if not normalized_url:
                     continue
 
                 # Apply all filters
-                if (self._should_include_url(normalized_url) and 
+                if (self._should_include_url(normalized_url) and
                     self._is_allowed_by_robots(normalized_url)):
-                    valid_links.add(normalized_url)
+                    if self._is_pagination_link(url):
+                        pagination_links.add(normalized_url)
+                    else:
+                        profile_links.add(normalized_url)
 
         except Exception as e:
             logger.error(f"Error extracting links from {base_url}: {e}")
 
-        return valid_links
+        return profile_links, pagination_links

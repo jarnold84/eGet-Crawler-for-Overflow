@@ -59,14 +59,16 @@ class CrawlerService:
                 
                 # Extract new links if within depth limit
                 if depth < request.max_depth:
-                    new_links = link_extractor.extract_links(
+                    profile_links, pagination_links = link_extractor.extract_links(
                         scrape_result["data"]["html"],
                         url
                     )
-                    
+
                     async with self._lock:
-                        for link in new_links:
-                            await queue_manager.add_url(link, depth + 1, url)
+                        for link in profile_links:
+                            await queue_manager.add_url(link, depth + 1, url, priority=0)
+                        for link in pagination_links:
+                            await queue_manager.add_url(link, depth + 1, url, priority=1)
                 
                 # Store the page
                 async with self._lock:

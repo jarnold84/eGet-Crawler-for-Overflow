@@ -1,12 +1,10 @@
 from typing import Set, Optional, Dict
 import asyncio
-from collections import deque
-from datetime import datetime
 import time
 from loguru import logger
 from models.crawler_request import CrawlerRequest
 from models.crawler_response import CrawlStatus
-from asyncio import Queue
+from asyncio import PriorityQueue
 
 class QueueManager:
     """
@@ -22,8 +20,8 @@ class QueueManager:
         """
         self.max_depth = request.max_depth
         self.max_pages = request.max_pages
-        # self.queue: deque = deque()
-        self.queue: Queue = Queue()
+        # Use a PriorityQueue to allow ordering of URLs
+        self.queue: PriorityQueue = PriorityQueue()
         self.seen_urls: Set[str] = set()
         self.in_progress: Set[str] = set()
         self.url_depths: Dict[str, int] = {}
@@ -31,7 +29,9 @@ class QueueManager:
         self.last_request_time = 0.0
         self._lock = asyncio.Lock()
 
-    async def add_url(self, url: str, depth: int = 0, parent_url: Optional[str] = None) -> bool:
+    async def add_url(self, url: str, depth: int = 0,
+                      parent_url: Optional[str] = None,
+                      priority: int = 0) -> bool:
         """
         Add a URL to the queue if it hasn't been seen and respects depth limits.
         
@@ -51,8 +51,11 @@ class QueueManager:
                 # self.queue.append(url)
                 self.seen_urls.add(url)
                 self.url_depths[url] = depth
-                await self.queue.put(url)
-                logger.debug(f"Added URL to queue: {url} (depth: {depth})")
+                # PriorityQueue retrieves lowest value first, so lower numbers are higher priority
+                await self.queue.put((priority, url))
+                logger.debug(
+                    f"Added URL to queue: {url} (depth: {depth}, priority: {priority})"
+                )
                 return True
             return False
 
@@ -75,11 +78,10 @@ class QueueManager:
             if time_since_last < self.rate_limit_delay:
                 await asyncio.sleep(self.rate_limit_delay - time_since_last)
 
-            # url = self.queue.popleft()
-            url = await self.queue.get()
+            priority, url = await self.queue.get()
             self.in_progress.add(url)
             self.last_request_time = time.time()
-            
+
             return url
 
     async def mark_complete(self, url: str) -> None:
@@ -94,13 +96,13 @@ class QueueManager:
     @property
     def is_complete(self) -> bool:
         """Check if crawling is complete"""
-        return not self.queue and not self.in_progress
+        return self.queue.empty() and not self.in_progress
 
     @property
     def stats(self) -> Dict:
         """Get current queue statistics"""
         return {
-            "queued": len(self.queue),
+            "queued": self.queue.qsize(),
             "in_progress": len(self.in_progress),
             "total_seen": len(self.seen_urls)
         }
