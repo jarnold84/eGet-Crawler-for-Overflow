@@ -1,30 +1,33 @@
 {
-  "title": "eGet Overflow Scraper Input",
+  "title": "Overflow Web Scraper Input",
+  "schemaVersion": 1,
   "type": "object",
   "properties": {
     "url": {
       "title": "Start URL",
       "type": "string",
-      "description": "The URL to begin scraping from."
+      "description": "The URL to start crawling from (e.g., faculty page, directory).",
+      "default": ""
     },
-    "max_depth": {
-      "title": "Maximum Depth",
+    "maxDepth": {
+      "title": "Max Depth",
       "type": "integer",
       "default": 2,
-      "description": "How deep the crawler should go when following links."
+      "description": "How deep to crawl (0 = single page, 1 = profile links, etc)."
     },
-    "max_pages": {
-      "title": "Maximum Pages",
+    "maxPages": {
+      "title": "Max Pages",
       "type": "integer",
-      "default": 5,
-      "description": "How many pages the crawler should process before stopping."
+      "default": 50,
+      "description": "Limit the number of pages crawled in total."
     },
     "campaign": {
       "title": "Campaign Name",
       "type": "string",
-      "default": "test",
-      "description": "A name tag for identifying this run."
+      "default": "default",
+      "description": "Used to load selector pack (e.g., 'university_faculty', 'music_festivals')."
     }
   },
   "required": ["url"]
 }
+git add input_schema.json
