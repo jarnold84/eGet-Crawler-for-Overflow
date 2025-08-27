@@ -7,6 +7,8 @@ from loguru import logger
 from models.crawler_request import CrawlerRequest
 from models.crawler_response import CrawlStatus
 from asyncio import Queue
+from urllib.parse import urlparse, parse_qs, urlencode
+import hashlib
 
 class QueueManager:
     """
@@ -25,6 +27,7 @@ class QueueManager:
         # self.queue: deque = deque()
         self.queue: Queue = Queue()
         self.seen_urls: Set[str] = set()
+        self.url_hashes: Set[str] = set()
         self.in_progress: Set[str] = set()
         self.url_depths: Dict[str, int] = {}
         self.rate_limit_delay = 0.0  # seconds between requests
@@ -44,17 +47,35 @@ class QueueManager:
             bool: True if URL was added, False if skipped
         """
         async with self._lock:
-            if (url not in self.seen_urls and 
-                depth <= self.max_depth and 
+            url_hash = self._url_hash(url)
+            if (url_hash not in self.url_hashes and
+                depth <= self.max_depth and
                 len(self.seen_urls) < self.max_pages):
-                
-                # self.queue.append(url)
+
+                self.url_hashes.add(url_hash)
                 self.seen_urls.add(url)
                 self.url_depths[url] = depth
                 await self.queue.put(url)
                 logger.debug(f"Added URL to queue: {url} (depth: {depth})")
                 return True
             return False
+
+    def _url_hash(self, url: str) -> str:
+        """Generate a hash for URL ignoring pagination-irrelevant parameters"""
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query, keep_blank_values=False)
+        page_val = None
+        for param in {"page", "p", "offset", "start"}:
+            if param in qs and qs[param]:
+                page_val = qs[param][0]
+                del qs[param]
+                break
+        filtered_query = urlencode(sorted((k, v) for k, vals in qs.items() for v in vals))
+        canonical = parsed._replace(query=filtered_query).geturl()
+        base_hash = hashlib.sha256(canonical.encode()).hexdigest()
+        if page_val is not None:
+            return f"{base_hash}:{page_val}"
+        return base_hash
 
     async def get_next_url(self) -> Optional[str]:
         """

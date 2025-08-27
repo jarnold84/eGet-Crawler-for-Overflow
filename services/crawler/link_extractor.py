@@ -1,5 +1,5 @@
 from typing import List, Set, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qsl, parse_qs, urlencode
 from bs4 import BeautifulSoup
 import re
 from loguru import logger
@@ -26,6 +26,8 @@ class LinkExtractor:
         self.respect_robots = request.respect_robots_txt
         self._robots_parser = robotexclusionrulesparser.RobotExclusionRulesParser()
         self._load_robots_txt(str(request.url))
+        # Recognized pagination parameters
+        self.pagination_params = {"page", "p", "offset", "start"}
 
     def _load_robots_txt(self, url: str) -> None:
         """Load and parse robots.txt if it exists"""
@@ -54,13 +56,20 @@ class LinkExtractor:
             # Parse URL
             parsed = urlparse(absolute_url)
             
-            # Basic normalization
+            # Preserve recognized pagination parameters while removing others
+            query_pairs = parse_qsl(parsed.query, keep_blank_values=False)
+            filtered = [
+                (k, v) for k, v in query_pairs
+                if k.lower() in self.pagination_params and v.isdigit()
+            ]
+            normalized_query = urlencode(filtered)
+
             normalized = parsed._replace(
                 fragment="",  # Remove fragments
                 params="",    # Remove params
-                query=""     # Remove query string
+                query=normalized_query
             ).geturl()
-            
+
             return normalized
         except Exception as e:
             logger.debug(f"URL normalization failed for {url}: {e}")
@@ -87,9 +96,30 @@ class LinkExtractor:
 
         # Check include patterns
         if self.include_patterns:
-            return any(pattern.search(url) for pattern in self.include_patterns)
+            if any(pattern.search(url) for pattern in self.include_patterns):
+                return True
+            # Allow recognized pagination URLs even if not explicitly included
+            if self._is_pagination_url(url):
+                return True
+            return False
 
         return True
+
+    def _is_pagination_url(self, url: str) -> bool:
+        """Detect common pagination patterns in a URL"""
+        parsed = urlparse(url)
+
+        # Check path-based pagination (e.g., /page/2)
+        if re.search(r"/page/\d+", parsed.path, re.IGNORECASE):
+            return True
+
+        # Check query-based pagination parameters
+        query = parse_qs(parsed.query)
+        for param in self.pagination_params:
+            if param in query and any(v.isdigit() for v in query[param]):
+                return True
+
+        return False
 
     def extract_links(self, html: str, base_url: str) -> Set[str]:
         """
