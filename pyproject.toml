@@ -1,0 +1,4 @@
+# pyproject.toml – tells pip which build backend to use
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
