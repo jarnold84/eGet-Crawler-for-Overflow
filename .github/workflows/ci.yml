@@ -1,0 +1,40 @@
+# .github/workflows/ci.yml
+name: CI
+
+# Run on every push to the branch you’re working on (e.g., joseph) and on PRs
+on:
+  push:
+    branches: [joseph, main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]   # test against two Python versions
+    steps:
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # --------------------------------------------------------------
+      # 👉 NEW LINT STEP – validates selectors.yaml
+      # --------------------------------------------------------------
+      - name: ✅ Validate selectors.yaml
+        run: |
+          # This will raise an exception (non‑zero exit) if the YAML is broken
+          python -c "import yaml, sys; yaml.safe_load(open('configs/selectors.yaml')) or {}"
+
+      - name: 🧪 Run tests
+        run: pytest -q
