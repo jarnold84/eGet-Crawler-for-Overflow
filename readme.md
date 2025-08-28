@@ -502,3 +502,17 @@ list_page.url – URL template; {query} will be replaced with the search term.
 pagination – CSS selector for the “next page” button and optional max_pages.
 result_items – selectors that locate each result on the list page.
 profile_page – selectors used after clicking a result to scrape the detail page.
+
+## Current Campaign Selectors - Called CampaignMode in Google Sheets
+wedding_planner
+event_venue
+retreat_host
+podcast_host
+school_director
+corporate_wellness
+nonprofit_partner
+gallery_curator
+collaborator
+press_outreach
+faculty_directory
+generic_business

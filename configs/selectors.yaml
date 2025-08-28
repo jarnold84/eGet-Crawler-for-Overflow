@@ -17,10 +17,8 @@ selectors:
     list_page:
       link_selectors:
         - css: ".gallery-item a"
-      pagination:
-        next_css: ".pagination .next"
     profile_page:
-      fields:
+      fields: &photographer_fields                # ← anchor definition
         name:
           - css: "h1.title"
           - xpath: "//h1[contains(@class,'title')]"
@@ -64,7 +62,7 @@ selectors:
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields                # ← reuse anchor
 
   gallery_curator:
     list_page:
@@ -73,7 +71,7 @@ selectors:
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields
 
   collaborator:
     list_page:
@@ -82,7 +80,7 @@ selectors:
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields
 
   event_venue:
     list_page:
@@ -91,7 +89,7 @@ selectors:
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields
 
   retreat_host:
     list_page:
@@ -100,7 +98,7 @@ selectors:
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields
 
   press_outreach:
     list_page:
@@ -109,7 +107,7 @@ selectors:
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields
 
   corporate_wellness:
     list_page:
@@ -118,7 +116,7 @@ selectors:
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields
 
   podcast_host:
     list_page:
@@ -127,7 +125,7 @@ selectors:
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields
 
   nonprofit_partner:
     list_page:
@@ -136,16 +134,16 @@ selectors:
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields
 
-  music_school_director:
+  school_director:
     list_page:
       link_selectors:
         - css: ".gallery-item a"
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields
 
   donor_aligned_leads:
     list_page:
@@ -154,4 +152,4 @@ selectors:
       pagination:
         next_css: ".pagination .next"
     profile_page:
-      fields: *photographer_portfolio.profile_page.fields
+      fields: *photographer_fields
