@@ -467,3 +467,38 @@ This project is licensed under the Apache License - see the LICENSE file for det
 - FastAPI for the amazing web framework
 - Selenium team for browser automation
 - Beautiful Soup for HTML parsing
+
+## JOSEPH Additions
+
+## Adding a new campaign
+
+A *campaign* describes how the crawler should navigate a particular website
+(e.g. “wedding_planner”, “software_engineer”).  
+All campaign‑specific settings live in **`configs/selectors.yaml`** under the
+top‑level `selectors` key.
+
+### 1. Edit `configs/selectors.yaml`
+
+```yaml
+selectors:
+  <your_campaign_name>:
+    list_page:
+      url: "https://example.com/search?q={query}"
+      pagination:
+        next_button: "button.next"
+        max_pages: 5
+      result_items:
+        container: "div.result"
+        title: "h2.title"
+        link: "a.details"
+    profile_page:
+      description: "div.description"
+      contact:
+        email: "a.email"
+        phone: "span.phone"
+Copy
+<your_campaign_name> – the identifier you will pass to the CLI or API.
+list_page.url – URL template; {query} will be replaced with the search term.
+pagination – CSS selector for the “next page” button and optional max_pages.
+result_items – selectors that locate each result on the list page.
+profile_page – selectors used after clicking a result to scrape the detail page.
