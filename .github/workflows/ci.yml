@@ -32,7 +32,7 @@ jobs:
             ${{ runner.os }}-pip-
 
       # --------------------------------------------------------------
-      # 3️⃣ Set up the desired Python version
+      # 3️⃣ Set up the Python version from the matrix
       # --------------------------------------------------------------
       - name: 🐍 Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -48,9 +48,9 @@ jobs:
           pip install -r requirements.txt
 
       # --------------------------------------------------------------
-      # 5️⃣ Install the repository in *editable* mode
+      # 5️⃣ Install the repository in editable mode (now works!)
       # --------------------------------------------------------------
-      - name: 📦 Install the repo (editable)
+      - name: 📦 Install repo in editable mode
         run: |
           pip install -e .
 
