@@ -1,0 +1,157 @@
+# configs/selectors.yaml
+# One top‑level key per campaign (vertical).  Add new campaigns here
+# without touching any Python code.
+
+selectors:
+  faculty_directory:
+    list_page:
+      link_selectors:
+        - css: ".faculty-list a.profile-link"
+        - xpath: "//div[@class='faculty']//a[contains(@href,'/profile/')]"
+      pagination:
+        next_css: "a.next"
+        next_xpath: "//a[@rel='next']"
+        next_url_regex: "\\?page=\\d+$"
+
+  photographer_portfolio:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields:
+        name:
+          - css: "h1.title"
+          - xpath: "//h1[contains(@class,'title')]"
+        email:
+          - css: "a.email"
+          - xpath: "//a[contains(@href,'mailto:')]"
+        phone:
+          - css: ".contact .phone"
+        socials:
+          - css: ".social-links a"
+        title:
+          - css: ".bio h2"
+        organization:
+          - css: ".bio .company"
+
+  generic_business:
+    list_page:
+      link_selectors:
+        - css: ".business-card a.details"
+      pagination:
+        next_css: "a[rel='next']"
+    profile_page:
+      fields:
+        name:
+          - css: ".profile-header h1"
+        email:
+          - css: ".contact-info a[href^='mailto:']"
+        phone:
+          - css: ".contact-info .phone"
+        socials:
+          - css: ".social-icons a"
+        title:
+          - css: ".profile-header .role"
+        organization:
+          - css: ".profile-header .company"
+
+  wedding_planner:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields
+
+  gallery_curator:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields
+
+  collaborator:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields
+
+  event_venue:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields
+
+  retreat_host:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields
+
+  press_outreach:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields
+
+  corporate_wellness:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields
+
+  podcast_host:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields
+
+  nonprofit_partner:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields
+
+  music_school_director:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields
+
+  donor_aligned_leads:
+    list_page:
+      link_selectors:
+        - css: ".gallery-item a"
+      pagination:
+        next_css: ".pagination .next"
+    profile_page:
+      fields: *photographer_portfolio.profile_page.fields

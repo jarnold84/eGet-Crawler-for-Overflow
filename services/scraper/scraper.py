@@ -1,31 +1,74 @@
+# --------------------------------------------------------------
+# scraper.py – full, corrected import section
+# --------------------------------------------------------------
+
+# ---------- Standard library ----------
+import asyncio
+import base64
+import os
+import re
+import sys
+import tempfile
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from typing import Dict, Any, List, Optional, Set
+from functools import wraps
+from typing import Any, Dict, List, Optional, Set
+
+# ---------- Selenium / WebDriver ----------
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import (
+    WebDriverException,
+    TimeoutException,
+    StaleElementReferenceException,   # <-- added
+)
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import WebDriverException, TimeoutException
+from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
+
+# ---------- HTML / parsing ----------
 from bs4 import BeautifulSoup
 import html2text
+
+# ---------- Logging ----------
 from loguru import logger
-import base64
-import re, sys
-import asyncio
-from functools import wraps
-from concurrent.futures import ThreadPoolExecutor
-import time
-import tempfile
-import uuid
-import os
-from core.exceptions import BrowserError
-from core.config import get_settings
+
+# ---------- Third‑party helpers ----------
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# ---------- Project‑specific imports ----------
+from core.config import get_settings
+from core.exceptions import BrowserError
+
+# Cache layer
 from services.cache import cache_service
 from services.cache.cache_service import CacheService
+
+# Extraction utilities
 from services.extractors.structured_data import StructuredDataExtractor
+
+# --------------------------------------------------------------
+# Selector‑driven crawler helpers (fixed imports)
+# --------------------------------------------------------------
+# Relative imports work when the package is executed as part of the
+# application; the fallback absolute imports silence Pylance when the
+# file is opened in isolation.
+try:  # pragma: no‑cover – normal runtime path
+    from .browser_pool import BrowserPool               # type: ignore
+except ImportError:  # pragma: no‑cover – editor‑time fallback
+    from services.crawler.browser_pool import BrowserPool  # noqa: F401
+
+try:  # pragma: no‑cover
+    from .content_extractor import ContentExtractor     # type: ignore
+except ImportError:  # pragma: no‑cover
+    from services.crawler.content_extractor import ContentExtractor  # noqa: F401
+
+# Config loader – already works
+from services.crawler.config_loader import get_campaign_config
 
 # Metrics for monitoring
 from prometheus_client import Counter, Histogram, Gauge
@@ -668,196 +711,293 @@ class BrowserPool:
             logger.info("Browser pool cleanup completed")
 
 class WebScraper:
-    def __init__(self, max_concurrent: int = 5):
-        # Core components initialization
-        # self.browser_manager = BrowserManager(max_browsers=max_concurrent)
+    """
+    Scraper that pulls its selector definitions from ``configs/selectors.yaml``.
+    Pass the desired *campaign* name when constructing the instance.
+    """
+
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+    def __init__(self, campaign: str, max_concurrent: int = 5):
+        # Load the campaign‑specific configuration once
+        self.cfg = get_campaign_config(campaign)          # ← NEW
         self.browser_pool = BrowserPool(max_browsers=max_concurrent)
         self.content_extractor = ContentExtractor()
         self.structured_data_extractor = StructuredDataExtractor()
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.cache_service = None
-        # Keep track of browsers in use
         self.active_browsers = set()
-    
+
     @classmethod
-    async def create(cls, max_concurrent: int = 5, cache_service: Optional[CacheService] = None) -> 'WebScraper':
-        """Factory method for creating WebScraper instance with optional cache service"""
-        instance = cls(max_concurrent=max_concurrent)
-        instance.cache_service = cache_service  # Set the cache service
+    async def create(
+        cls,
+        campaign: str,
+        max_concurrent: int = 5,
+        cache_service: Optional[CacheService] = None,
+    ) -> "WebScraper":
+        """Factory method – identical to before, just forwards the campaign."""
+        instance = cls(campaign=campaign, max_concurrent=max_concurrent)
+        instance.cache_service = cache_service
         if instance.cache_service:
             await instance.cache_service.connect()
         return instance
-    
+
+    # ------------------------------------------------------------------
+    # Tiny selector helper – returns the first non‑empty match
+    # ------------------------------------------------------------------
+    def _first_match(self, soup: BeautifulSoup, selectors: List[Dict[str, str]]) -> List[Any]:
+        """
+        Iterate over a list of selector dicts (each containing either ``css`` or ``xpath``)
+        and return the first non‑empty result set.
+        """
+        for sel in selectors:
+            if "css" in sel:
+                result = soup.select(sel["css"])
+                if result:
+                    return result
+            elif "xpath" in sel:
+                # Simple XPath support via lxml (fallback if you have it installed)
+                try:
+                    from lxml import etree
+
+                    tree = etree.HTML(str(soup))
+                    result = tree.xpath(sel["xpath"])
+                    if result:
+                        return result
+                except Exception:
+                    pass  # ignore and continue
+        return []  # nothing matched
+
+    # ------------------------------------------------------------------
+    # Link extraction (list pages)
+    # ------------------------------------------------------------------
+    def _extract_links(self, page_html: str) -> List[str]:
+        soup = BeautifulSoup(page_html, "html.parser")
+        raw_links = self._first_match(soup, self.cfg["list_page"]["link_selectors"])
+        # Normalise to href strings – works for both CSS (Tag objects) and XPath (strings)
+        links: List[str] = []
+        for el in raw_links:
+            if hasattr(el, "get"):
+                href = el.get("href")
+                if href:
+                    links.append(href)
+            elif isinstance(el, str):
+                links.append(el)
+        return links
+
+    # ------------------------------------------------------------------
+    # Pagination detection (list pages)
+    # ------------------------------------------------------------------
+    def _has_next_page(self, page_html: str) -> bool:
+        soup = BeautifulSoup(page_html, "html.parser")
+        pagination_cfg = self.cfg["list_page"].get("pagination", {})
+        # Try CSS first, then XPath – reuse the helper
+        next_elem = self._first_match(soup, [
+            {"css": pagination_cfg.get("next_css")} if pagination_cfg.get("next_css") else {},
+            {"xpath": pagination_cfg.get("next_xpath")} if pagination_cfg.get("next_xpath") else {}
+        ])
+        if next_elem:
+            return True
+        # Fallback: regex on URLs (if the page contains a “next” link URL)
+        regex = pagination_cfg.get("next_url_regex")
+        if regex:
+            import re
+
+            return bool(re.search(regex, page_html))
+        return False
+
+    # ------------------------------------------------------------------
+    # Profile‑field extraction (detail pages)
+    # ------------------------------------------------------------------
+    def _extract_profile(self, page_html: str) -> Dict[str, List[str]]:
+        """
+        Returns a dict where each key (name, email, …) maps to a list of extracted values.
+        """
+        soup = BeautifulSoup(page_html, "html.parser")
+        fields_cfg = self.cfg.get("profile_page", {}).get("fields", {})
+        result: Dict[str, List[str]] = {}
+        for field_name, selectors in fields_cfg.items():
+            matches = self._first_match(soup, selectors)
+            values: List[str] = []
+            for m in matches:
+                if hasattr(m, "get_text"):
+                    values.append(m.get_text(strip=True))
+                elif isinstance(m, str):
+                    values.append(m.strip())
+            if values:
+                result[field_name] = values
+        return result
+
+    # ------------------------------------------------------------------
+    # Existing private helpers (unchanged apart from using the new methods)
+    # ------------------------------------------------------------------
     async def _get_page_content(self, url: str, options: Dict[str, Any]) -> Dict[str, Any]:
         context = await self.browser_pool.get_browser()
         try:
-            await context.navigate(url, timeout=options.get('timeout', 30))
-            
-            if options.get('wait_for_selector'):
+            await context.navigate(url, timeout=options.get("timeout", 30))
+
+            if options.get("wait_for_selector"):
                 element_present = EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, options['wait_for_selector'])
+                    (By.CSS_SELECTOR, options["wait_for_selector"])
                 )
-                WebDriverWait(context.browser, options.get('timeout', 30)).until(element_present)
+                WebDriverWait(context.browser, options.get("timeout", 30)).until(
+                    element_present
+                )
 
             page_source = await context.get_page_source()
-            
+
             screenshot = None
-            if options.get('include_screenshot'):
+            if options.get("include_screenshot"):
                 screenshot = await context.take_screenshot()
 
-            links = context.browser.execute_script("""
+            links = context.browser.execute_script(
+                """
                 return Array.from(document.getElementsByTagName('a')).map(a => ({
                     href: a.href,
                     text: a.textContent.trim(),
                     rel: a.rel
                 }));
-            """)
+                """
+            )
 
             return {
-                'content': page_source,
-                'raw_content': page_source if options.get('include_raw_html') else None,
-                'status': 200,
-                'screenshot': screenshot,
-                'links': links,
-                'headers': {}
+                "content": page_source,
+                "raw_content": page_source
+                if options.get("include_raw_html")
+                else None,
+                "status": 200,
+                "screenshot": screenshot,
+                "links": links,
+                "headers": {},
             }
 
         finally:
             await self.browser_pool.release_browser(context)
 
-    async def _release_browser(self, browser: webdriver.Chrome):
-        """Separate browser release method"""
-        if browser in self.active_browsers:
-            self.active_browsers.remove(browser)
-            await self.browser_manager.release_browser(browser)
- 
+    # ------------------------------------------------------------------
+    # scrape / _process_page_data stay exactly as you posted
+    # ------------------------------------------------------------------
     async def scrape(self, url: str, options: Dict[str, Any]) -> Dict[str, Any]:
-        """Main scraping method with caching"""
         SCRAPE_REQUESTS.inc()
-        
+
         try:
-            # Check cache first if caching is enabled
-            if self.cache_service and not options.get('bypass_cache'):
+            if self.cache_service and not options.get("bypass_cache"):
                 cached_result = await self.cache_service.get_cached_result(url, options)
                 if cached_result:
-                    return {
-                        'success': True,
-                        'data': cached_result,
-                        'cached': True
-                    }
-            
-            # If not cached or cache bypassed, proceed with scraping
+                    return {"success": True, "data": cached_result, "cached": True}
+
             async with self.semaphore:
                 try:
                     with SCRAPE_DURATION.time():
-                        # Get and process page content
                         page_data = await self._get_page_content(url, options)
-                        processed_data = await self._process_page_data(page_data, options, url)
-                        
-                        # Cache the result if caching is enabled
-                        if self.cache_service and not options.get('bypass_cache'):
-                            cache_ttl = options.get('cache_ttl', getattr(settings, 'CACHE_TTL', 86400))  # Default to 24 hours
-                            await self.cache_service.cache_result(
-                                url, 
-                                options, 
-                                processed_data,
-                                ttl=timedelta(seconds=cache_ttl)
+                        processed_data = await self._process_page_data(
+                            page_data, options, url
+                        )
+
+                        if self.cache_service and not options.get("bypass_cache"):
+                            cache_ttl = options.get(
+                                "cache_ttl",
+                                getattr(settings, "CACHE_TTL", 86400),
                             )
-                        
+                            await self.cache_service.cache_result(
+                                url,
+                                options,
+                                processed_data,
+                                ttl=timedelta(seconds=cache_ttl),
+                            )
+
                         return {
-                            'success': True,
-                            'data': processed_data,
-                            'cached': False
+                            "success": True,
+                            "data": processed_data,
+                            "cached": False,
                         }
-                        
+
                 except Exception as e:
                     SCRAPE_ERRORS.inc()
                     logger.error(f"Scraping error for {url}: {str(e)}")
                     return {
-                        'success': False,
-                        'data': {
-                            'markdown': None,
-                            'html': None,
-                            'rawHtml': None,
-                            'screenshot': None,
-                            'links': None,
-                            'actions': None,
-                            'metadata': {
-                                'title': None,
-                                'description': None,
-                                'language': None,
-                                'sourceURL': url,
-                                'statusCode': 500,
-                                'error': str(e)
+                        "success": False,
+                        "data": {
+                            "markdown": None,
+                            "html": None,
+                            "rawHtml": None,
+                            "screenshot": None,
+                            "links": None,
+                            "actions": None,
+                            "metadata": {
+                                "title": None,
+                                "description": None,
+                                "language": None,
+                                "sourceURL": url,
+                                "statusCode": 500,
+                                "error": str(e),
                             },
-                            'llm_extraction': None,
-                            'warning': str(e),
-                            'structured_data': None
-                        }
+                            "llm_extraction": None,
+                            "warning": str(e),
+                            "structured_data": None,
+                        },
                     }
-                    
+
         except Exception as e:
             logger.error(f"Unexpected error in scrape method: {str(e)}")
             SCRAPE_ERRORS.inc()
             raise
 
-    async def _process_page_data(self, page_data: Dict[str, Any], 
-                               options: Dict[str, Any], url: str) -> Dict[str, Any]:
-        """Process page data with proper async handling"""
+    async def _process_page_data(
+        self, page_data: Dict[str, Any], options: Dict[str, Any], url: str
+    ) -> Dict[str, Any]:
         try:
-            # Create content extraction tasks
             content_task = self.content_extractor.extract_content(
-                page_data['content'],
-                options.get('only_main', True)
+                page_data["content"], options.get("only_main", True)
             )
 
             structured_data_future = asyncio.get_event_loop().run_in_executor(
-                None,
-                self.structured_data_extractor.extract_all,
-                page_data['content']
+                None, self.structured_data_extractor.extract_all, page_data["content"]
             )
 
-            # Wait for both tasks to complete
             processed_content, structured_data = await asyncio.gather(
-                content_task,
-                structured_data_future
+                content_task, structured_data_future
             )
 
-            # Build response data (rest remains the same)
             metadata = {
-                'title': None,
-                'description': None,
-                'language': None,
-                'sourceURL': url,
-                'statusCode': page_data['status'],
-                'error': None
+                "title": None,
+                "description": None,
+                "language": None,
+                "sourceURL": url,
+                "statusCode": page_data["status"],
+                "error": None,
             }
-            if processed_content.get('metadata'):
-                metadata.update(processed_content['metadata'])
+            if processed_content.get("metadata"):
+                metadata.update(processed_content["metadata"])
 
-            formatted_links = [
-                link['href'] for link in page_data.get('links', [])
-                if link.get('href')
-            ] if page_data.get('links') else None
+            formatted_links = (
+                [link["href"] for link in page_data.get("links", []) if link.get("href")]
+                if page_data.get("links")
+                else None
+            )
 
             return {
-                'markdown': processed_content['markdown'],
-                'html': processed_content['html'],
-                'rawHtml': page_data['raw_content'],
-                'screenshot': None,
-                'links': formatted_links,
-                'actions': ({'screenshots': [page_data['screenshot']]} 
-                          if page_data.get('screenshot') else None),
-                'metadata': metadata,
-                'llm_extraction': None,
-                'warning': None,
-                'structured_data': structured_data
+                "markdown": processed_content["markdown"],
+                "html": processed_content["html"],
+                "rawHtml": page_data["raw_content"],
+                "screenshot": None,
+                "links": formatted_links,
+                "actions": (
+                    {"screenshots": [page_data["screenshot"]]}
+                    if page_data.get("screenshot")
+                    else None
+                ),
+                "metadata": metadata,
+                "llm_extraction": None,
+                "warning": None,
+                "structured_data": structured_data,
             }
 
         except Exception as e:
             logger.error(f"Data processing error: {str(e)}")
             raise
-    
+
     async def cleanup(self):
         """Cleanup resources"""
         await self.browser_pool.cleanup()
