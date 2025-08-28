@@ -1,5 +1,6 @@
 # .github/workflows/ci.yml
 name: CI
+
 on:
   push:
     branches: [joseph, main]
@@ -13,25 +14,55 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      # --------------------------------------------------------------
+      # 1️⃣ Checkout the repository
+      # --------------------------------------------------------------
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
 
+      # --------------------------------------------------------------
+      # 2️⃣ Cache pip downloads (optional but speeds up CI)
+      # --------------------------------------------------------------
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # --------------------------------------------------------------
+      # 3️⃣ Set up the desired Python version
+      # --------------------------------------------------------------
       - name: 🐍 Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
+      # --------------------------------------------------------------
+      # 4️⃣ Install runtime dependencies
+      # --------------------------------------------------------------
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 📦 Install the repository in editable mode   # <-- NEW
+      # --------------------------------------------------------------
+      # 5️⃣ Install the repository in *editable* mode
+      # --------------------------------------------------------------
+      - name: 📦 Install the repo (editable)
         run: |
           pip install -e .
 
+      # --------------------------------------------------------------
+      # 6️⃣ Validate selectors.yaml (your existing lint step)
+      # --------------------------------------------------------------
       - name: ✅ Validate selectors.yaml
         run: |
           python -c "import yaml, sys; yaml.safe_load(open('configs/selectors.yaml')) or {}"
 
+      # --------------------------------------------------------------
+      # 7️⃣ Run the test suite
+      # --------------------------------------------------------------
       - name: 🧪 Run tests
         run: pytest -q
