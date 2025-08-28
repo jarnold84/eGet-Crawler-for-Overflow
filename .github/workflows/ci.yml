@@ -1,7 +1,6 @@
 # .github/workflows/ci.yml
 name: CI
 
-# Run on every push to the branch you’re working on (e.g., joseph) and on PRs
 on:
   push:
     branches: [joseph, main]
@@ -13,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]   # test against two Python versions
+        python-version: ["3.11", "3.12"]
     steps:
       - name: ⬇️ Checkout repository
         uses: actions/checkout@v4
@@ -26,14 +25,16 @@ jobs:
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
+          # Install both runtime and test requirements
           pip install -r requirements.txt
+          # If you have a separate dev‑only file, uncomment the next line:
+          # pip install -r requirements-dev.txt
 
       # --------------------------------------------------------------
-      # 👉 NEW LINT STEP – validates selectors.yaml
+      # 👉 Lint step – validates selectors.yaml (keeps the CI fast)
       # --------------------------------------------------------------
       - name: ✅ Validate selectors.yaml
         run: |
-          # This will raise an exception (non‑zero exit) if the YAML is broken
           python -c "import yaml, sys; yaml.safe_load(open('configs/selectors.yaml')) or {}"
 
       - name: 🧪 Run tests
