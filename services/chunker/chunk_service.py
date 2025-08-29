@@ -107,18 +107,53 @@ class ChunkService:
                 # Get chunks from Chonkie
                 chonkie_chunks = self.sentence_chunker.chunk(cleaned_markdown)
                 
-                # Convert Chonkie chunks to our Chunk format
-                chunks = []
-                for idx, chonkie_chunk in enumerate(chonkie_chunks):
-                    # Create hierarchy (simplified for sentence chunker)
-                    hierarchy = ChunkHierarchy(
-                        parent_id=None,
-                        level=0,
-                        path=[]
-                    )
-                    
-                    # Extract sentences info for metadata
-                    sentences_info = [s.text for s in chonkie_chunk.sentences]
+                # services/chunker/chunk_service.py
+
+                def _convert_chonkie_to_chunks(chonkie_chunks: List[ChonkieChunk]) -> List[Chunk]:
+                    """
+                    Turn the low‑level ``ChonkieChunk`` objects returned by the
+                    sentence‑level chunker into the public ``Chunk`` model used by the API.
+                    """
+                    chunks: List[Chunk] = []
+
+                    for idx, chonkie_chunk in enumerate(chonkie_chunks):
+                        # --------------------------------------------------------------
+                        # 1️⃣ Build a minimal hierarchy (parent‑less, level‑0)
+                        # --------------------------------------------------------------
+                        hierarchy = ChunkHierarchy(
+                            parent_id=None,
+                            level=0,
+                            path=[],
+                        )
+
+                        # --------------------------------------------------------------
+                        # 2️⃣ Gather sentence‑level info – this is the piece we were
+                        #    previously discarding.  We now store it in the ``metadata``
+                        #    field so it can be inspected later.
+                        # --------------------------------------------------------------
+                        sentences_info = [s.text for s in chonkie_chunk.sentences]
+
+                        # --------------------------------------------------------------
+                        # 3️⃣ Assemble the Chunk object
+                        # --------------------------------------------------------------
+                        chunk = Chunk(
+                            id=str(uuid4()),
+                            content=chonkie_chunk.text,
+                            # You can expose the raw sentences if you wish; otherwise we
+                            # just keep a summary count.
+                            metadata={
+                                "sentence_count": len(sentences_info),
+                                "sentences": sentences_info,          # <-- now *used*
+                                "source_index": idx,
+                                "char_start": chonkie_chunk.start,
+                                "char_end": chonkie_chunk.end,
+                            },
+                            hierarchy=hierarchy,
+                        )
+
+                        chunks.append(chunk)
+
+                    return chunks
                     
                     # Create metadata
                     metadata = ChunkMetadata(
