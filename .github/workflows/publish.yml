@@ -1,0 +1,47 @@
+# TO DO: Come back to this when ready to release this crawler commercially
+name: Publish to PyPI
+
+on:
+  push:
+    tags:        # runs only when you push a tag like v1.0.0
+      - 'v*.*.*'
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # needed for trusted publishing
+
+    steps:
+      # 1️⃣ Checkout the repo
+      - uses: actions/checkout@v4
+
+      # 2️⃣ Set up Python (choose the version you support)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # 3️⃣ Install build tools
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      # 4️⃣ Build the distribution (sdist + wheel)
+      - name: Build package
+        run: python -m build
+
+      # 5️⃣ Publish to TestPyPI (optional) – comment out if you only want prod
+      #- name: Publish to TestPyPI
+      #  uses: pypa/gh-action-pypi-publish@release/v1
+      #  with:
+      #    repository-url: https://test.pypi.org/legacy/
+      #    password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+
+      # 6️⃣ Publish to PyPI (real release)
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
