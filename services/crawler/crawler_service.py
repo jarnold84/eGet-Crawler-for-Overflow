@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict
 import asyncio
 import uuid
 from datetime import datetime
@@ -10,10 +10,9 @@ from .link_extractor import LinkExtractor
 from .queue_manager import QueueManager
 from models.crawler_request import CrawlerRequest
 from models.crawler_response import (
-    CrawlerResponse, CrawlStatus, CrawlStats, 
+    CrawlerResponse, CrawlStats, 
     CrawledPage, CrawlStatus
 )
-from core.exceptions import ScraperException
 
 class CrawlerService:
     """

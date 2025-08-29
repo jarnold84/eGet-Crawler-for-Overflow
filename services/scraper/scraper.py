@@ -5,13 +5,8 @@
 # ---------- Standard library ----------
 import asyncio
 import base64
-import os
 import re
-import sys
-import tempfile
 import time
-import uuid
-from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from functools import wraps
 from typing import Any, Dict, List, Optional, Set
@@ -45,7 +40,6 @@ from core.config import get_settings
 from core.exceptions import BrowserError
 
 # Cache layer
-from services.cache import cache_service
 from services.cache.cache_service import CacheService
 
 # Extraction utilities

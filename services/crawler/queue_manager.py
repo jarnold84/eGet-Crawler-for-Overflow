@@ -1,11 +1,8 @@
 from typing import Set, Optional, Dict
 import asyncio
-from collections import deque
-from datetime import datetime
 import time
 from loguru import logger
 from models.crawler_request import CrawlerRequest
-from models.crawler_response import CrawlStatus
 from asyncio import Queue
 
 class QueueManager:

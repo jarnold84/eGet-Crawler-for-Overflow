@@ -1,4 +1,4 @@
-from pydantic import BaseModel, conint, validator
+from pydantic import BaseModel, validator
 from typing import Optional, Dict, List
 from enum import Enum
 import os

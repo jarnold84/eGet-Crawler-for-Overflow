@@ -1,10 +1,9 @@
 from typing import Dict, Type
 from fastapi import UploadFile
-import asyncio
 from loguru import logger
 from services.cache.cache_service import CacheService
 from models.file_conversion_models import (
-    FileType, FileMetadata, FileConversionResponse,
+    FileType, FileConversionResponse,
     ConversionWarning
 )
 from core.exceptions import FileConversionException
@@ -12,8 +11,6 @@ import hashlib
 
 # Direct imports since all files are in the same directory
 from .base_converter import BaseDocumentConverter, ConversionContext
-from .document_structure import DocumentStructure, DocumentElement, ElementType
-from .file_utils import FileUtils
 from .converter_factory import ConverterFactory
 from .converters.pdf_converter import PDFConverter
 from .converters.docx_converter import DocxConverter

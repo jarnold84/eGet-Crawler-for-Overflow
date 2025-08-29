@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from models.chunk_request import ChunkRequest
 from models.chunk_response import ChunkResponse
 from services.chunker.chunk_service import ChunkService

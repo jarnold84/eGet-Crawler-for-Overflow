@@ -1,4 +1,3 @@
-from typing import Dict, Any, List
 import time
 import re
 from loguru import logger
@@ -6,7 +5,7 @@ from models.chunk_request import ChunkRequest
 from models.chunk_response import ChunkResponse, Chunk, ChunkMetadata, ChunkHierarchy
 from services.scraper.scraper import WebScraper
 from .semantic_chunker import SemanticChunker  # Keeping the original chunker
-from uuid import uuid4, UUID
+from uuid import uuid4
 
 # Import Chonkie's SentenceChunker
 from chonkie import SentenceChunker

@@ -1,15 +1,11 @@
 import re
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional
 from docx import Document
-from docx.oxml import OxmlElement
 from docx.oxml.text.paragraph import CT_P
 from docx.oxml.table import CT_Tbl
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
-from docx.table import _Cell, Table
-from docx.shared import Pt, RGBColor
-import base64
-from io import BytesIO
+from docx.table import Table
 from loguru import logger
 
 from ..base_converter import BaseDocumentConverter, ConversionContext

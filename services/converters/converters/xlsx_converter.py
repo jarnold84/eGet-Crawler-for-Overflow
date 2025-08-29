@@ -1,8 +1,6 @@
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Any, Tuple, Optional
 from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
-from openpyxl.cell import Cell
 from datetime import datetime
 from ..base_converter import BaseDocumentConverter, ConversionContext
 from ..document_structure import DocumentStructure, DocumentElement, ElementType

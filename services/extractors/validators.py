@@ -1,4 +1,4 @@
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional
 from pydantic import BaseModel, HttpUrl, validator
 
 class JsonLdData(BaseModel):

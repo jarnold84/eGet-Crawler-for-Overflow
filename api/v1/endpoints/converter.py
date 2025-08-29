@@ -1,5 +1,4 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Response
-from typing import Optional
 from models.file_conversion_models import FileConversionResponse, FileType
 from services.converters.conversion_service import ConversionService
 from core.config import settings

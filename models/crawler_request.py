@@ -1,5 +1,5 @@
 from pydantic import BaseModel, HttpUrl, validator, Field
-from typing import Optional, List, Pattern
+from typing import Optional, List
 import re
 from uuid import UUID, uuid4
 

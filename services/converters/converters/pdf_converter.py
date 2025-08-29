@@ -1,7 +1,6 @@
 import PyPDF2
-from typing import Dict, Any, List, Tuple, Optional, Set
+from typing import Dict, Any, List, Tuple, Optional
 import re
-from io import BytesIO
 from datetime import datetime
 from loguru import logger
 from ..base_converter import BaseDocumentConverter, ConversionContext

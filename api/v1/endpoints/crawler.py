@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from typing import List, Dict, Any
 from models.crawler_request import CrawlerRequest
-from models.crawler_response import CrawlerResponse, CrawlStatus  
+from models.crawler_response import CrawlStatus  
 from services.crawler.crawler_service import CrawlerService
 from loguru import logger
 

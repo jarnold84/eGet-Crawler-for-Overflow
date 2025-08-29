@@ -1,4 +1,4 @@
-from typing import List, Set, Optional
+from typing import Set, Optional
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import re
