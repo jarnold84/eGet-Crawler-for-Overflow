@@ -1,0 +1,23 @@
+# MANIFEST.in
+# ------------------------------------------------------------
+# Include the selector configuration that the crawler relies on
+# (grafting the whole folder guarantees every file under configs/ is packed)
+graft configs
+
+# Include the selector configuration that the crawler relies on
+graft configs
+recursive-include configs *.yaml *.json *.toml
+
+# Ship all Python source files (helps when building an sdist only)
+recursive-include services *.py
+recursive-include api *.py
+recursive-include core *.py
+recursive-include models *.py
+recursive-include tests *.py
+
+# Documentation
+include README.md
+include LICENSE
+
+# Exclude build artefacts
+global-exclude __pycache__ *.py[cod] *.so *.egg-info *.dist-info

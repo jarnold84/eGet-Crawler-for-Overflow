@@ -1,7 +1,7 @@
 # services/crawler/config_loader.py
 """
 Loads the selector configuration from ``configs/selectors.yaml``.
-The YAML now has a top‑level ``selectors`` key, so the loader extracts that
+If the YAML contains a top‑level ``selectors`` key, the loader extracts that
 mapping before returning a typed ``CampaignConfig``.
 """
 
@@ -80,8 +80,9 @@ def _load_yaml() -> dict:
     """Read the YAML file and return the inner ``selectors`` mapping."""
     with CONFIG_PATH.open("r", encoding="utf-8") as fh:
         raw = yaml.safe_load(fh) or {}
-        # The file now wraps everything under a top‑level key called “selectors”
-        return raw.get("selectors", {})
+        # If the file wraps everything under a top‑level key called “selectors”,
+        # return that inner dict; otherwise return the whole dict.
+        return raw.get("selectors", raw)
 
 
 # ----------------------------------------------------------------------
@@ -89,6 +90,7 @@ def _load_yaml() -> dict:
 # ----------------------------------------------------------------------
 class CampaignNotFoundError(KeyError):
     """Raised when a requested campaign does not exist in selectors.yaml."""
+
     def __init__(self, campaign_name: str):
         super().__init__(f"Campaign '{campaign_name}' not found.")
         self.campaign_name = campaign_name
@@ -103,10 +105,9 @@ def get_campaign_config(campaign_name: str) -> CampaignConfig:
     """
     raw_cfg = _load_yaml()
     try:
-        # ``raw_cfg`` is a plain dict mapping campaign names → config dicts.
+        # ``raw_cfg`` maps campaign names → config dicts.
         return raw_cfg[campaign_name]  # type: ignore[return-value]
     except KeyError as exc:
-        # Re‑raise a domain‑specific error that callers can catch.
         raise CampaignNotFoundError(campaign_name) from exc
 
 
