@@ -84,20 +84,30 @@ def _load_yaml() -> dict:
         return raw.get("selectors", {})
 
 
+# ----------------------------------------------------------------------
+# Custom exception for a missing campaign
+# ----------------------------------------------------------------------
+class CampaignNotFoundError(KeyError):
+    """Raised when a requested campaign does not exist in selectors.yaml."""
+    def __init__(self, campaign_name: str):
+        super().__init__(f"Campaign '{campaign_name}' not found.")
+        self.campaign_name = campaign_name
+
+
 def get_campaign_config(campaign_name: str) -> CampaignConfig:
     """
     Return the configuration for a given campaign.
 
     Raises:
-        KeyError: if the campaign does not exist in the YAML.
+        CampaignNotFoundError: if the campaign does not exist in the YAML.
     """
     raw_cfg = _load_yaml()
-    if campaign_name not in raw_cfg:
-        raise KeyError(
-            f"Campaign '{campaign_name}' not found in {CONFIG_PATH}"
-        )
-    # The cast is safe because the YAML follows the schema above.
-    return raw_cfg[campaign_name]  # type: ignore[return-value]
+    try:
+        # ``raw_cfg`` is a plain dict mapping campaign names → config dicts.
+        return raw_cfg[campaign_name]  # type: ignore[return-value]
+    except KeyError as exc:
+        # Re‑raise a domain‑specific error that callers can catch.
+        raise CampaignNotFoundError(campaign_name) from exc
 
 
 def list_available_campaigns() -> List[str]:
