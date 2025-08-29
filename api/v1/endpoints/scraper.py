@@ -1,20 +1,31 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Security
+from fastapi import APIRouter, HTTPException, Request, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError, jwt               # ← only the jose implementation
+from loguru import logger
+
+from core.config import settings
 from models.request import ScrapeRequest
 from models.response import ScrapeResponse
-from services.scraper.scraper import WebScraper
-from core.config import settings
-import jwt
-from loguru import logger
 
 router = APIRouter(tags=["scraper"])
 security = HTTPBearer()
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> bool:
+
+def verify_token(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+) -> bool:
+    """
+    Validate the supplied JWT. Returns ``True`` if the token is valid;
+    otherwise raises a 401 HTTPException.
+    """
     try:
-        jwt.decode(credentials.credentials, settings.SECRET_KEY, algorithms=["HS256"])
+        jwt.decode(
+            credentials.credentials,
+            settings.SECRET_KEY,
+            algorithms=["HS256"],
+        )
         return True
-    except:
+    except JWTError:  # catches only jose‑specific JWT errors
         raise HTTPException(status_code=401, detail="Invalid token")
 
 @router.post("/scrape", response_model=ScrapeResponse)
