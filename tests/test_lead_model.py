@@ -2,20 +2,27 @@
 import pytest
 from models.lead import Lead
 
+
+# --------------------------------------------------------------------- #
+# 1️⃣ Core setters + provenance (your original tests, kept verbatim)
+# --------------------------------------------------------------------- #
 def test_happy_path():
     """All setters store the value and record the source URL."""
     l = Lead()
     l.set_name("Alice Example", "https://site.com/profile/alice")
     l.set_email("alice@example.com", "https://site.com/profile/alice")
     l.set_phone("+1‑555‑123‑4567", "https://site.com/contact")
-    # Verify stored values
+
+    # Stored values
     assert l.name == "Alice Example"
     assert l.email == "alice@example.com"
     assert l.phone == "+1‑555‑123‑4567"
-    # Verify provenance dict
+
+    # Provenance dict
     assert l.source_urls["name"] == ["https://site.com/profile/alice"]
     assert l.source_urls["email"] == ["https://site.com/profile/alice"]
     assert l.source_urls["phone"] == ["https://site.com/contact"]
+
 
 def test_duplicate_url_not_added():
     """Calling a setter twice with the same URL should not duplicate it."""
@@ -23,11 +30,86 @@ def test_duplicate_url_not_added():
     url = "https://example.com/profile"
     l.set_email("a@b.com", url)
     l.set_email("a@b.com", url)   # same URL again
+
     # Only one entry should exist
     assert l.source_urls["email"] == [url]
+
 
 def test_missing_optional_fields_are_none():
     """Fields we never set stay as None and have no provenance entry."""
     l = Lead()
     assert l.name is None
     assert "name" not in l.source_urls
+
+
+# --------------------------------------------------------------------- #
+# 2️⃣ Additional behaviours required by the spec
+# --------------------------------------------------------------------- #
+def test_is_three_source_valid_various_combinations():
+    """Validate the helper that checks for ≥ 2 distinct contact channels."""
+    # ── only email → False
+    l = Lead()
+    l.set_email("e@x.com", "u")
+    assert not l.is_three_source_valid()
+
+    # ── email + phone → True
+    l.set_phone("123", "u")
+    assert l.is_three_source_valid()
+
+    # ── reset, email + social → True
+    l = Lead()
+    l.set_email("e@x.com", "u")
+    l.set_social_handles({"instagram": "https://insta.com/e"}, "u")
+    assert l.is_three_source_valid()
+
+    # ── only social (no email/phone) → False
+    l = Lead()
+    l.set_social_handles({"twitter": "https://t.co/x"}, "u")
+    assert not l.is_three_source_valid()
+
+
+def test_whitespace_trimming_and_empty_string_to_none():
+    """The generic validator should strip spaces and turn '' into None."""
+    l = Lead()
+    l.set_name("   Trim Me   ", "u")
+    assert l.name == "Trim Me"               # spaces removed
+
+    # Empty string becomes None and does NOT create provenance
+    l.set_email("", "u")
+    assert l.email is None
+    assert "email" not in l.source_urls
+
+
+def test_social_handle_provenance_per_platform():
+    """Each social platform gets its own URL list under source_urls."""
+    l = Lead()
+    l.set_social_handles(
+        {"instagram": "https://insta.com/me", "twitter": "https://t.co/me"},
+        "https://src.com/profile",
+    )
+    # Top‑level key
+    assert "socialHandles" in l.source_urls
+    # Platform‑specific lists
+    assert l.source_urls["socialHandles"]["instagram"] == ["https://src.com/profile"]
+    assert l.source_urls["socialHandles"]["twitter"] == ["https://src.com/profile"]
+
+
+def test_email_format_validation_raises():
+    """A badly‑formed email should raise a ValueError."""
+    l = Lead()
+    with pytest.raises(ValueError):
+        l.set_email("not-an-email", "u")
+
+
+def test_to_dict_excludes_none_fields():
+    """`to_dict()` should drop any attribute that is still None."""
+    l = Lead()
+    l.set_name("Bob", "u")
+    payload = l.to_dict()
+    # `email` and `phone` are omitted entirely
+    assert "email" not in payload
+    assert "phone" not in payload
+    # `name` is present
+    assert payload["name"] == "Bob"
+    # provenance for name is kept
+    assert payload["source_urls"]["name"] == ["u"]
