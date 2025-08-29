@@ -84,10 +84,21 @@ except ImportError:  # pragma: no cover
             try:
                 # This will raise CampaignNotFoundError if the name is absent.
                 cfg = get_campaign_config(campaign)
-                # (cfg is not used further here, but loading it proves the name is valid.)
+
+                # ------------------------------------------------------------------
+                # Use the variable so the linter is satisfied and we get a helpful log.
+                # ------------------------------------------------------------------
+                # DEBUG level – you can raise the level in production if you don’t want
+                # this to appear in normal logs.
+                logger.debug(
+                    "✅ Loaded campaign configuration for '%s' (selectors: %s)",
+                    campaign,
+                    cfg,
+                )
             except CampaignNotFoundError as exc:
                 # Log the problem and surface it via the Apify dataset.
-                logger.error(str(exc))
+                logger.error("❌ Campaign validation failed: %s", exc)
+
                 await Actor.push_data(
                     {
                         "status": "failed",
@@ -96,6 +107,7 @@ except ImportError:  # pragma: no cover
                         "campaign": campaign,
                     }
                 )
+
                 # Early‑exit – nothing else to do for an invalid campaign.
                 return
 
