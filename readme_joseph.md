@@ -114,4 +114,5 @@ If anything feels unclear, open an issue or drop a comment on the PR.
 Happy crawling! 🚀
 
 
-4 files
+Testing
+The test suite now includes comprehensive checks for the Lead model. New tests verify the contact‑channel validation logic (is_three_source_valid), ensure provenance tracking via source_urls works correctly, and confirm proper serialization with to_dict. The updated file tests/test_lead_additional.py replaces the older version and brings the total test count to seven passing tests (7 passed).
