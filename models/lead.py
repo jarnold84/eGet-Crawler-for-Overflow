@@ -1,35 +1,35 @@
-# models/lead.py
+# services/models/lead.py
 from __future__ import annotations
 
 from typing import List, Dict, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Lead(BaseModel):
     """
-    Pydantic v2 model for a single prospect.
+    Pydantic v2 model for a single prospect.
     Every mutable field has a corresponding entry in ``source_urls`` that
     records the URL(s) that supplied the value.
     """
 
-    # ------------------------------------------------------------------ #
-    # Core identifiers
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
+    # Core identifiers (canonical names)
+    # ------------------------------------------------------------------
     name: Optional[str] = None
-    business_name: Optional[str] = None
+    business_name: Optional[str] = None          # <- underlying storage for title / organization
     profile_link: Optional[str] = None
 
-    # ------------------------------------------------------------------ #
-    # Contact channels
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
+    # Contact channels (canonical names)
+    # ------------------------------------------------------------------
     email: Optional[str] = None
     phone: Optional[str] = None
-    social_handles: Optional[Dict[str, str]] = None  # platform → URL
+    social_handles: Optional[Dict[str, str]] = None   # platform → URL (canonical)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Context / descriptive fields
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     services_offered: Optional[List[str]] = None
     style_vibe_descriptors: Optional[List[str]] = None
     location: Optional[Union[str, Dict]] = None
@@ -41,16 +41,16 @@ class Lead(BaseModel):
     ] = None
     values_mission_statement: Optional[str] = None
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Raw artefacts & scoring
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     raw_page_text: Optional[str] = None
     confidence: Optional[float] = None
     flags: Optional[List[str]] = None
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Provenance – every non‑empty field records the URL(s) that produced it
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     source_urls: Dict[
         str,
         Union[
@@ -59,12 +59,48 @@ class Lead(BaseModel):
         ],
     ] = Field(default_factory=dict)
 
-    # ------------------------------------------------------------------ #
-    # Helpers
-    # ------------------------------------------------------------------ #
-    class Config:
-        extra = "ignore"
+    # ------------------------------------------------------------------
+    # Pydantic configuration – allow population by alias name and ignore extras
+    # ------------------------------------------------------------------
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
+    # ------------------------------------------------------------------
+    # Alias fields required by the scraper (title, organization, socials)
+    # ------------------------------------------------------------------
+    # These are *properties* that proxy to the canonical attributes.
+    # They behave like regular fields for the scraper while keeping a single
+    # source of truth internally.
+
+    @property
+    def title(self) -> Optional[str]:
+        """Alias for ``business_name``."""
+        return self.business_name
+
+    @title.setter
+    def title(self, value: Optional[str]) -> None:
+        self.business_name = value
+
+    @property
+    def organization(self) -> Optional[str]:
+        """Another alias for ``business_name``."""
+        return self.business_name
+
+    @organization.setter
+    def organization(self, value: Optional[str]) -> None:
+        self.business_name = value
+
+    @property
+    def socials(self) -> Optional[Dict[str, str]]:
+        """Alias for ``social_handles``."""
+        return self.social_handles
+
+    @socials.setter
+    def socials(self, value: Optional[Dict[str, str]]) -> None:
+        self.social_handles = value
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
     def _add_source(self, field: str, url: str) -> None:
         """
         Append *url* to the provenance list for *field*,
@@ -79,12 +115,15 @@ class Lead(BaseModel):
         if url not in src[field]:               # type: ignore[index]
             src[field].append(url)               # type: ignore[call-arg]
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Generic whitespace / empty‑string normaliser
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     @field_validator("*", mode="before")
     @classmethod
-    def _strip_and_nullify(cls, v: Optional[Union[str, List, Dict]]) -> Optional[Union[str, List, Dict]]:
+    def _strip_and_nullify(
+        cls,
+        v: Optional[Union[str, List, Dict]],
+    ) -> Optional[Union[str, List, Dict]]:
         """
         * Strip leading/trailing whitespace from strings.
         * Convert empty strings (after stripping) to ``None``.
@@ -95,9 +134,9 @@ class Lead(BaseModel):
             return v or None
         return v
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Email & phone validators (run on model creation – also used in setters)
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     @field_validator("email")
     @classmethod
     def _validate_email(cls, v: Optional[str]) -> Optional[str]:
@@ -127,9 +166,9 @@ class Lead(BaseModel):
 
         return cleaned
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Public setters – each writes the value **and** records provenance
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Core identifiers ----------------------------------------------------
     def set_name(self, value: str, src_url: str) -> None:
         # Apply the same whitespace‑normalisation the validator does
@@ -273,9 +312,9 @@ class Lead(BaseModel):
         if flag not in self.flags:
             self.flags.append(flag)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Export helpers
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     def to_dict(self) -> Dict:
         """
         Serialise the lead to a plain dict ready for JSON export or
@@ -284,9 +323,9 @@ class Lead(BaseModel):
         """
         return self.model_dump(exclude_none=True)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Contact‑channel helper
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     def is_three_source_valid(self) -> bool:
         """
         Returns True if at least two distinct contact channels are present
