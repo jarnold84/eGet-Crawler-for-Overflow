@@ -5,23 +5,17 @@ Given a profile URL and a campaign name, extracts the fields defined in
 """
 
 import logging
-import os
-import sys
 from typing import Dict, List, Optional
 
 import httpx
 from bs4 import BeautifulSoup
 
 from .config_loader import get_campaign_config, CampaignConfig
+from models.lead_factory import lead_from_mapping
 
 log = logging.getLogger(__name__)
 
-# ------------------------------------------------------------
-#  Import the Lead factory – the model lives in the top‑level `models` package
-# ------------------------------------------------------------
-from models.lead_factory import lead_from_mapping
 
-# ----------------------------------------------------------------------
 def _extract_one_field(soup: BeautifulSoup, selectors: List[dict]) -> Optional[str]:
     """
     Returns the first non‑empty string found by the supplied selectors.
@@ -45,7 +39,6 @@ def _extract_one_field(soup: BeautifulSoup, selectors: List[dict]) -> Optional[s
     return None
 
 
-# ----------------------------------------------------------------------
 def extract_lead(campaign_name: str, profile_url: str):
     """
     Fetches ``profile_url`` and builds a ``Lead`` according to the selectors
@@ -82,7 +75,6 @@ def extract_lead(campaign_name: str, profile_url: str):
     # ------------------------------------------------------------------
     # 3️⃣ Build the Lead via the factory (handles validation & filtering)
     # ------------------------------------------------------------------
-    # Always include the source URL – the factory will ignore unknown keys.
     raw_fields["source_url"] = profile_url
     lead = lead_from_mapping(raw_fields)
 
