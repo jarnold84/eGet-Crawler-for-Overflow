@@ -10,6 +10,10 @@ import time
 from datetime import timedelta
 from functools import wraps
 from typing import Any, Dict, List, Optional, Set
+try:
+    from playwright.async_api import async_playwright
+except Exception:  # pragma: no cover
+    async_playwright = None  # type: ignore
 
 # ---------- Selenium / WebDriver ----------
 from selenium import webdriver

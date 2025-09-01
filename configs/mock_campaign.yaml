@@ -1,0 +1,14 @@
+# e.g. config/campaigns/mock_campaign.yaml
+campaign_name: mock_campaign
+list_page:
+  urls:
+    - http://localhost:8000/index.html
+  profile_link_css: "ul li a"          # matches the <a> tags in index.html
+profile_page:
+  selectors:
+    full_name: ".name"
+    email: ".email"
+    phone_number: ".phone"
+    organization: ".company"
+    title: ".title"
+    address: ".address"

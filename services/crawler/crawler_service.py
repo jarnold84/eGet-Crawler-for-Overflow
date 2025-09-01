@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 # ----------------------------------------------------------------------
 from services.scraper.scraper import WebScraper
 from .link_extractor import LinkExtractor
-from .queue_manager import QueueManager
+from .queue_manager import QueueManager 
 from .profile_extractor import extract_lead          # <-- NEW
 from models.lead import Lead                       # <-- NEW
 from models.crawler_request import CrawlerRequest
@@ -31,10 +31,33 @@ class CrawlerService:
     extracts a Lead from each visited page and persists it.
     """
 
-    def __init__(self, max_concurrent: int = 5, worker_threads: int = 3):
+    def __init__(
+        self,
+        *,
+        campaign_name: str,
+        max_concurrent: int = 5,
+        worker_threads: int = 3,
+    ):
+        """
+        Parameters
+        ----------
+        campaign_name: str
+            Identifier of the campaign configuration (e.g. "mock_campaign").
+            It is passed to the underlying ``WebScraper`` so the scraper can
+            apply any campaign‑specific headers, cookies, or throttling rules.
+        max_concurrent: int
+            Maximum number of simultaneous HTTP requests.
+        worker_threads: int
+            Number of threads used for CPU‑bound post‑processing (e.g. lead
+            extraction).  Defaults to 3, matching the original implementation.
+        """
+        self.campaign_name = campaign_name
         self.max_concurrent = max_concurrent
         self.worker_threads = worker_threads
-        self.scraper = WebScraper(max_concurrent=max_concurrent)
+
+        # NOTE: WebScraper now requires the campaign identifier.
+        self.scraper = WebScraper(campaign=campaign_name, max_concurrent=max_concurrent)
+
         self.active_crawls: Dict[uuid.UUID, CrawlerResponse] = {}
         self._lock = asyncio.Lock()
         self._executor = ThreadPoolExecutor(max_workers=worker_threads)
