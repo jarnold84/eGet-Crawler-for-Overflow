@@ -1,0 +1,12 @@
+# Core test runner
+pytest==8.2.2
+
+# Coverage integration
+pytest-cov==5.0.0
+
+# Linting
+flake8==7.1.1
+
+# (optional) flake8‑extensions you might find handy
+flake8-bugbear==24.2.6
+flake8-comprehensions==3.14.0

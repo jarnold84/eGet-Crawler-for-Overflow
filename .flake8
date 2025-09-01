@@ -1,0 +1,16 @@
+[flake8]
+# Skip the massive virtual‑env and cache directories
+exclude =
+    .venv,
+    __pycache__,
+    *.egg-info,
+    build,
+    dist
+
+# Allow a bit more room for long URLs / docstrings (still PEP‑8 friendly)
+max-line-length = 120
+
+# Ignore the “line break before binary operator” warning (optional)
+ignore = W503
+
+# If you still want to keep the original 79‑char limit, just omit the max-line-length line.

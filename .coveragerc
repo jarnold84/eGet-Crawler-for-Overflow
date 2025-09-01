@@ -1,0 +1,12 @@
+[run]
+# Only count files that are actually imported during the test run
+source = models
+
+[report]
+# Omit files that have no coverage at all
+omit =
+    */chunk_*.py
+    */request.py
+    */response.py
+    */file_conversion_models.py
+    */__init__.py
