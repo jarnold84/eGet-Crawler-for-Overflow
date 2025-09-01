@@ -17,9 +17,9 @@ from .config_loader import get_campaign_config, CampaignConfig
 log = logging.getLogger(__name__)
 
 # ------------------------------------------------------------
-#  Import the Lead model – it lives in the top‑level `models` package
+#  Import the Lead factory – the model lives in the top‑level `models` package
 # ------------------------------------------------------------
-from models.lead import Lead
+from models.lead_factory import lead_from_mapping
 
 # ----------------------------------------------------------------------
 def _extract_one_field(soup: BeautifulSoup, selectors: List[dict]) -> Optional[str]:
@@ -46,7 +46,7 @@ def _extract_one_field(soup: BeautifulSoup, selectors: List[dict]) -> Optional[s
 
 
 # ----------------------------------------------------------------------
-def extract_lead(campaign_name: str, profile_url: str) -> Lead:
+def extract_lead(campaign_name: str, profile_url: str):
     """
     Fetches ``profile_url`` and builds a ``Lead`` according to the selectors
     defined for ``campaign_name``.
@@ -64,23 +64,26 @@ def extract_lead(campaign_name: str, profile_url: str) -> Lead:
     # 2️⃣ Apply the campaign’s selectors
     # ------------------------------------------------------------------
     fields_cfg = cfg.profile_page.fields if cfg.profile_page else None
-    extracted: Dict[str, Optional[str]] = {}
+    raw_fields: Dict[str, Optional[str]] = {}
 
     if fields_cfg:
-        for field_name in ("name", "title", "email", "phone", "socials", "organization"):
+        for field_name in (
+            "name",
+            "title",
+            "email",
+            "phone",
+            "socials",
+            "organization",
+        ):
             selectors = getattr(fields_cfg, field_name, [])
             if selectors:
-                extracted[field_name] = _extract_one_field(soup, selectors)
+                raw_fields[field_name] = _extract_one_field(soup, selectors)
 
     # ------------------------------------------------------------------
-    # 3️⃣ Build the Lead instance (aliases work because of populate_by_name)
+    # 3️⃣ Build the Lead via the factory (handles validation & filtering)
     # ------------------------------------------------------------------
-    return Lead(
-        source_url=profile_url,
-        name=extracted.get("name"),
-        title=extracted.get("title"),
-        email=extracted.get("email"),
-        phone=extracted.get("phone"),
-        socials=extracted.get("socials"),
-        organization=extracted.get("organization"),
-    )
+    # Always include the source URL – the factory will ignore unknown keys.
+    raw_fields["source_url"] = profile_url
+    lead = lead_from_mapping(raw_fields)
+
+    return lead
