@@ -5,6 +5,8 @@ Given a profile URL and a campaign name, extracts the fields defined in
 """
 
 import logging
+import os
+import sys
 from typing import Dict, List, Optional
 
 import httpx
@@ -12,17 +14,12 @@ from bs4 import BeautifulSoup
 
 from .config_loader import get_campaign_config, CampaignConfig
 
-# ------------------- IMPORT FIXED -------------------
-# Choose ONE of the two lines below (remove the other).
-
-# 1️⃣ Relative import (requires __init__.py in parent packages)
-# from ..models.lead import Lead
-
-# 2️⃣ Absolute import (also works once the package is on PYTHONPATH)
-from services.models.lead import Lead
-# --------------------------------------------------
-
 log = logging.getLogger(__name__)
+
+# ------------------------------------------------------------
+#  Import the Lead model – it lives in the top‑level `models` package
+# ------------------------------------------------------------
+from models.lead import Lead
 
 # ----------------------------------------------------------------------
 def _extract_one_field(soup: BeautifulSoup, selectors: List[dict]) -> Optional[str]:
@@ -38,7 +35,7 @@ def _extract_one_field(soup: BeautifulSoup, selectors: List[dict]) -> Optional[s
             continue
 
         if elem:
-            # Prefer the href attribute for links, otherwise text.
+            # Prefer href for <a>, otherwise text.
             if elem.name == "a":
                 val = elem.get("href")
             else:
@@ -56,32 +53,34 @@ def extract_lead(campaign_name: str, profile_url: str) -> Lead:
     """
     cfg: CampaignConfig = get_campaign_config(campaign_name)
 
+    # ------------------------------------------------------------------
+    # 1️⃣ Retrieve the page
+    # ------------------------------------------------------------------
     resp = httpx.get(profile_url, timeout=10.0)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
+    # ------------------------------------------------------------------
+    # 2️⃣ Apply the campaign’s selectors
+    # ------------------------------------------------------------------
     fields_cfg = cfg.profile_page.fields if cfg.profile_page else None
-    data: Dict[str, Optional[str]] = {}
+    extracted: Dict[str, Optional[str]] = {}
 
     if fields_cfg:
-        for field_name in (
-            "name",
-            "title",
-            "email",
-            "phone",
-            "socials",
-            "organization",
-        ):
+        for field_name in ("name", "title", "email", "phone", "socials", "organization"):
             selectors = getattr(fields_cfg, field_name, [])
             if selectors:
-                data[field_name] = _extract_one_field(soup, selectors)
+                extracted[field_name] = _extract_one_field(soup, selectors)
 
+    # ------------------------------------------------------------------
+    # 3️⃣ Build the Lead instance (aliases work because of populate_by_name)
+    # ------------------------------------------------------------------
     return Lead(
         source_url=profile_url,
-        name=data.get("name"),
-        title=data.get("title"),
-        email=data.get("email"),
-        phone=data.get("phone"),
-        socials=data.get("socials"),
-        organization=data.get("organization"),
+        name=extracted.get("name"),
+        title=extracted.get("title"),
+        email=extracted.get("email"),
+        phone=extracted.get("phone"),
+        socials=extracted.get("socials"),
+        organization=extracted.get("organization"),
     )
