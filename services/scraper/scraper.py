@@ -505,25 +505,36 @@ class BrowserPool:
         self._shutdown = False
 
     async def _create_browser(self) -> BrowserContext:
-        """Instantiate a fresh Chrome driver with the shared hardening steps."""
-        logger.info("Creating new Selenium Chrome instance")
-        chrome_options = Options()
-        chrome_options.binary_location = "/usr/bin/chromium"
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
-        chrome_options.add_experimental_option("useAutomationExtension", False)
+        """Instantiate a fresh head‑less Chromium browser using Playwright."""
+        from playwright.async_api import async_playwright
 
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        logger.info("Creating new Playwright Chromium instance")
 
-        ctx = BrowserContext(driver, config={
+        # Start Playwright and launch a head‑less Chromium that matches the bundled binary
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-gpu",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+            ],
+        )
+        # Create an isolated browser context (equivalent to a Selenium driver)
+        context = await self._browser.new_context(
+            viewport={"width": 1280, "height": 1024},
+            java_script_enabled=True,
+        )
+        page = await context.new_page()
+
+        # Wrap the Playwright page in the existing BrowserContext abstraction
+        ctx = BrowserContext(page, config={
             "window_width": 1280,
             "window_height": 1024,
         })
+
+        # Update Prometheus metrics
         BROWSER_CREATION_TOTAL.inc()
         BROWSER_POOL_SIZE.set(
             self._available.qsize()
