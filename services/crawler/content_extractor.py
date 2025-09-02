@@ -11,6 +11,17 @@ Here we return the raw HTML as both markdown and HTML so the
 scraper can continue to work.  Swap this out with your real
 extraction logic whenever you’re ready.
 """
+"""
+Placeholder content‑extractor.
+
+The production scraper currently uses the richer implementation defined in
+`services/scraper/scraper.py`.  This module is retained as a convenient
+location for a minimal stub that can be swapped in during early prototyping
+or when experimenting with alternative extraction libraries (e.g. readability‑lxml).
+
+If you decide to use this stub, import it explicitly:
+    from services.crawler.content_extractor import ContentExtractor
+"""
 
 class ContentExtractor:
     """Very small placeholder – replace with a real extractor later."""

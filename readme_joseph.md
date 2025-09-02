@@ -116,3 +116,6 @@ Happy crawling! 🚀
 
 Testing
 The test suite now includes comprehensive checks for the Lead model. New tests verify the contact‑channel validation logic (is_three_source_valid), ensure provenance tracking via source_urls works correctly, and confirm proper serialization with to_dict. The updated file tests/test_lead_additional.py replaces the older version and brings the total test count to seven passing tests (7 passed).
+
+Content extraction strategy 
+The main scraper (services/scraper/scraper.py) contains a full‑featured ContentExtractor that performs HTML cleaning, metadata extraction, main‑article heuristics, and markdown conversion. A lightweight placeholder lives in services/crawler/content_extractor.py for rapid prototyping or future replacement. The placeholder is not used by the current production code.

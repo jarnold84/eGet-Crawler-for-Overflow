@@ -43,29 +43,12 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 # ---------- Project‑specific imports ----------
 from core.config import get_settings
-from core.exceptions import BrowserError
 
 # Cache layer
 from services.cache.cache_service import CacheService
 
 # Extraction utilities
 from services.extractors.structured_data import StructuredDataExtractor
-
-# --------------------------------------------------------------
-# Selector‑driven crawler helpers (fixed imports)
-# --------------------------------------------------------------
-# Relative imports work when the package is executed as part of the
-# application; the fallback absolute imports silence Pylance when the
-# file is opened in isolation.
-try:  # pragma: no‑cover – normal runtime path
-    from .browser_pool import BrowserPool               # type: ignore
-except ImportError:  # pragma: no‑cover – editor‑time fallback
-    from services.crawler.browser_pool import BrowserPool  # noqa: F401
-
-try:  # pragma: no‑cover
-    from .content_extractor import ContentExtractor     # type: ignore
-except ImportError:  # pragma: no‑cover
-    from services.crawler.content_extractor import ContentExtractor  # noqa: F401
 
 # Config loader – already works
 from services.crawler.config_loader import get_campaign_config
@@ -531,7 +514,11 @@ class BrowserPool:
             "window_height": 1024,
         })
         BROWSER_CREATION_TOTAL.inc()
-        BROWSER_POOL_SIZE.set(self._available.qsize() + len(self._active) + 1)
+        BROWSER_POOL_SIZE.set(
+            self._available.qsize()
+            + len(self._active)
+            + 1
+        )  
         return ctx
 
     async def get_browser(self) -> BrowserContext:

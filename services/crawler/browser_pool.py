@@ -12,6 +12,14 @@ For now we provide a **stub** that satisfies the type‑checker and
 allows the rest of the scraper to be exercised.  Replace the
 NotImplementedError with your actual pool logic when you’re ready.
 """
+"""
+Stub implementation of BrowserPool.
+
+The production scraper (services/scraper/scraper.py) currently uses its own
+full‑featured BrowserPool class.  This module remains as a lightweight
+fallback that can be imported explicitly if you need a no‑Selenium version
+for testing or early prototyping.
+"""
 
 import asyncio
 from typing import Any
