@@ -1,0 +1,119 @@
+--- a/services/scraper/scraper.py
++++ b/services/scraper/scraper.py
+@@
+-import logging
+-from typing import Optional
++import logging
++import asyncio
++from typing import Optional
+@@
+-# Existing imports …
+-# (e.g. from selenium import webdriver)
++# Existing imports …
++# (e.g. from selenium import webdriver)
++
++# --------------------------------------------------------------
++# OPTIONAL PLAYWRIGHT IMPORT
++# --------------------------------------------------------------
++# We import Playwright lazily – if it isn’t installed the variable
++# will be None and the fallback will never be used.
++try:
++    from playwright.async_api import async_playwright
++except Exception:  # pragma: no cover
++    async_playwright = None  # type: ignore
+@@
+ class WebScraper:
+@@
+-    def get_browser(self):
+-        """
+-        Return a browser instance.
+-        Tries Selenium (Chrome) first; if that fails, falls back to Playwright.
+-        The returned object implements a minimal subset:
+-            - .get(url)   for Selenium
+-            - .goto(url)  for Playwright (we’ll wrap it)
+-            - .page_source / .content() to fetch HTML
+-            - .quit() / .close() for cleanup
+-        """
+-        try:
+-            # Existing Selenium logic …
+-            from selenium import webdriver
+-            opts = webdriver.ChromeOptions()
+-            opts.add_argument(\"--headless\")
+-            driver = webdriver.Chrome(options=opts)
+-            return driver
+-        except Exception as exc:   # Selenium not available or Chrome binary missing
+-            logging.warning(
+-                \"Selenium Chrome driver unavailable (%s); falling back to Playwright\",
+-                exc,
+-            )
+-            # Use Playwright – we need an async wrapper, so we create a tiny sync shim
+-            import asyncio
+-
+-            async def _create():
+-                pw, browser = await self._launch_playwright_browser()
+-                # Wrap the Playwright page in an object that mimics Selenium's API
+-                class PlaywrightWrapper:
+-                    def __init__(self, pw_mgr, browser_obj):
+-                        self.pw_mgr = pw_mgr
+-                        self.browser = browser_obj
+-                        self.page = None
+-
+-                    async def _ensure_page(self):
+-                        if self.page is None:
+-                            self.page = await self.browser.new_page()
+-
+-                    def get(self, url: str):
+-                        # Synchronous façade – runs the async call and blocks
+-                        asyncio.run(self._sync_get(url))
+-
+-                    async def _sync_get(self, url: str):
+-                        await self._ensure_page()
+-                        await self.page.goto(url)
+-
+-                    @property
+-                    def page_source(self):
+-                        # Return the latest HTML synchronously
+-                        return asyncio.run(self._sync_content())
+-
+-                    async def _sync_content(self):
+-                        await self._ensure_page()
+-                        return await self.page.content()
+-
+-                    def quit(self):
+-                        asyncio.run(self._cleanup())
+-
+-                    async def _cleanup(self):
+-                        await self.browser.close()
+-                        await self.pw_mgr.stop()
+-
+-                return PlaywrightWrapper(pw, browser)
+-
+-            # Block until the async factory finishes and give back the wrapper
+-            return asyncio.run(_create())
++    # -----------------------------------------------------------------
++    # get_browser – Selenium first, Playwright fallback
++    # -----------------------------------------------------------------
++    def get_browser(self):
++        """
++        Return a browser‑like object.
++        1️⃣ Try Selenium (Chrome) – the original behaviour.
++        2️⃣ If Selenium cannot start (missing binary, driver, etc.),
++           fall back to Playwright which we ship with the project.
++        The returned object implements the tiny subset used by the rest of
++        the scraper: ``get(url)``, ``page_source`` and ``quit()``.
++        """
++        # ---------- Selenium path ----------
++        try:
++            from selenium import webdriver
++
++            opts = webdriver.ChromeOptions()
++            opts.add_argument(\"--headless\")          # headless mode works in CI
++            driver = webdriver.Chrome(options=opts)
++            return driver
++        except Exception as exc:   # pragma: no cover
++            logging.warning(
++                \"Selenium Chrome driver unavailable (%s); trying Playwright fallback\",\n+                exc,\n+            )\n+\n+        # ---------- Playwright fallback ----------
++        if async_playwright is None:  # pragma: no cover
++            raise RuntimeError(
++                \"Playwright is not installed and Selenium failed – cannot obtain a browser\"\n+            )\n+\n+        async def _make_wrapper():\n+            pw = await async_playwright().start()\n+            browser = await pw.chromium.launch(headless=True)\n+\n+            class PlaywrightWrapper:\n+                def __init__(self, pw_mgr, browser_obj):\n+                    self._pw = pw_mgr\n+                    self._browser = browser_obj\n+                    self._page = None\n+\n+                async def _ensure_page(self):\n+                    if self._page is None:\n+                        self._page = await self._browser.new_page()\n+\n+                # ---- API used by the rest of the code ----\n+                def get(self, url: str):\n+                    # Block the async call so callers can stay sync‑style\n+                    asyncio.run(self._async_get(url))\n+\n+                async def _async_get(self, url: str):\n+                    await self._ensure_page()\n+                    await self._page.goto(url)\n+\n+                @property\n+                def page_source(self) -> str:\n+                    return asyncio.run(self._async_content())\n+\n+                async def _async_content(self) -> str:\n+                    await self._ensure_page()\n+                    return await self._page.content()\n+\n+                def quit(self):\n+                    asyncio.run(self._async_quit())\n+\n+                async def _async_quit(self):\n+                    await self._browser.close()\n+                    await self._pw.stop()\n+\n+            return PlaywrightWrapper(pw, browser)\n+\n+        # The outer ``get_browser`` stays synchronous, so we block here.\n+        return asyncio.run(_make_wrapper())
+*** End Patch

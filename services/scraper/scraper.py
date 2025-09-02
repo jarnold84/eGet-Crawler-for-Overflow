@@ -10,6 +10,8 @@ import time
 from datetime import timedelta
 from functools import wraps
 from typing import Any, Dict, List, Optional, Set
+
+# ---------- Playwright (optional) ----------
 try:
     from playwright.async_api import async_playwright
 except Exception:  # pragma: no cover
@@ -20,7 +22,7 @@ from selenium import webdriver
 from selenium.common.exceptions import (
     WebDriverException,
     TimeoutException,
-    StaleElementReferenceException,   # <-- added
+    StaleElementReferenceException,
 )
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -70,6 +72,7 @@ from services.crawler.config_loader import get_campaign_config
 
 # Metrics for monitoring
 from prometheus_client import Counter, Histogram, Gauge
+
 SCRAPE_REQUESTS = Counter('scraper_requests_total', 'Total number of scrape requests')
 SCRAPE_ERRORS = Counter('scraper_errors_total', 'Total number of scrape errors')
 SCRAPE_DURATION = Histogram('scraper_duration_seconds', 'Time spent scraping URLs')
@@ -83,7 +86,7 @@ BROWSER_CLEANUP_TOTAL = Counter('browser_cleanup_total', 'Total number of browse
 
 # Browser Health Metrics
 BROWSER_MEMORY_USAGE = Histogram('browser_memory_usage_bytes', 'Browser memory usage in bytes',
-                                buckets=[100*1024*1024, 500*1024*1024, 1024*1024*1024])  # 100MB, 500MB, 1GB buckets
+                                buckets=[100*1024*1024, 500*1024*1024, 1024*1024*1024])
 BROWSER_HEALTH_CHECK_DURATION = Histogram('browser_health_check_seconds', 'Time spent on browser health checks')
 
 # Navigation Metrics
@@ -97,83 +100,82 @@ CLOUDFLARE_BYPASS_FAILURE = Counter('cloudflare_bypass_failure_total', 'Failed C
 
 settings = get_settings()
 
+
+# ----------------------------------------------------------------------
+# Helper decorators
+# ----------------------------------------------------------------------
 def with_retry(max_retries: int = 3, delay: float = 1.0):
-    """Decorator for retry logic"""
+    """Simple async retry decorator used by a few internal calls."""
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            last_exception = None
+            last_exc = None
             for attempt in range(max_retries):
                 try:
                     return await func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                except Exception as exc:  # pylint: disable=broad-except
+                    last_exc = exc
+                    logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {exc}")
                     if attempt < max_retries - 1:
                         await asyncio.sleep(delay * (attempt + 1))
-            raise last_exception
+            raise last_exc
         return wrapper
     return decorator
 
+
+# ----------------------------------------------------------------------
+# Selenium‑only safe_get_url (kept for compatibility)
+# ----------------------------------------------------------------------
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
     retry=retry_if_exception_type(WebDriverException)
 )
 def safe_get_url(browser: webdriver.Chrome, url: str, timeout: int):
-    """Safely get URL with retry mechanism"""
+    """Safely navigate to a URL with Selenium, applying a timeout."""
     browser.set_page_load_timeout(timeout)
     return browser.get(url)
 
+
+# ----------------------------------------------------------------------
+# Content extraction (unchanged apart from minor refactoring)
+# ----------------------------------------------------------------------
 class ContentExtractor:
-    """Enhanced content extraction with better cleaning and extraction logic"""
-    
+    """Enhanced content extraction with better cleaning and extraction logic."""
+
     def __init__(self):
         self.html2text_handler = html2text.HTML2Text()
         self.html2text_handler.ignore_links = False
         self.html2text_handler.ignore_images = False
         self.html2text_handler.ignore_tables = False
         self.html2text_handler.body_width = 0
-    
+
     def _clean_html(self, html: str) -> str:
-        """Clean HTML content with enhanced filtering"""
-        try:
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            # Remove unwanted elements
-            for element in soup.find_all([
-                'script', 'style', 'iframe', 'nav', 'footer',
-                'noscript', 'meta', 'link', 'comment'
-            ]):
-                element.decompose()
-            
-            # Clean attributes
-            for tag in soup.find_all(True):
-                allowed_attrs = ['href', 'src', 'alt', 'title']
-                attrs = dict(tag.attrs)
-                for attr in attrs:
-                    if attr not in allowed_attrs:
-                        del tag[attr]
-            
-            return str(soup)
-        except Exception as e:
-            logger.error(f"HTML cleaning failed: {str(e)}")
-            raise
-    
+        """Strip unwanted tags/attributes."""
+        soup = BeautifulSoup(html, 'html.parser')
+        for element in soup.find_all([
+            'script', 'style', 'iframe', 'nav', 'footer',
+            'noscript', 'meta', 'link', 'comment'
+        ]):
+            element.decompose()
+
+        for tag in soup.find_all(True):
+            allowed = {'href', 'src', 'alt', 'title'}
+            for attr in list(tag.attrs):
+                if attr not in allowed:
+                    del tag[attr]
+
+        return str(soup)
+
     def _extract_metadata(self, soup: BeautifulSoup) -> Dict[str, str]:
-        """Extract comprehensive metadata from HTML"""
+        """Pull common meta tags."""
         metadata = {}
-        
-        # Get title with fallbacks
-        title_tag = (
-            soup.find('meta', property='og:title') or 
-            soup.find('title')
-        )
+
+        title_tag = soup.find('meta', property='og:title') or soup.find('title')
         if title_tag:
             metadata['title'] = title_tag.get('content', '') or title_tag.string
-            
-        # Get meta tags with prioritized mappings
-        meta_mappings = {
+
+        mappings = {
             'description': ['description', 'og:description'],
             'language': ['language', 'og:locale'],
             'author': ['author', 'article:author'],
@@ -181,193 +183,200 @@ class ContentExtractor:
             'keywords': ['keywords'],
             'image': ['og:image']
         }
-        
+
         for meta in soup.find_all('meta'):
             name = meta.get('name') or meta.get('property')
             content = meta.get('content')
-            
             if name and content:
-                for key, possible_names in meta_mappings.items():
-                    if name.lower() in possible_names:
+                for key, candidates in mappings.items():
+                    if name.lower() in candidates:
                         metadata[key] = content.strip()
-        
         return metadata
 
     def _find_main_content(self, soup: BeautifulSoup) -> Optional[str]:
-        """Enhanced main content detection"""
-        content_patterns = [
+        """Heuristic to locate the primary article body."""
+        patterns = [
             {'tag': 'main'},
             {'tag': 'article'},
             {'tag': 'div', 'id': re.compile(r'content|main|article', re.I)},
             {'tag': 'div', 'class': re.compile(r'content|main|article', re.I)},
             {'tag': 'div', 'role': 'main'}
         ]
-        
-        for pattern in content_patterns:
-            element = soup.find(**pattern)
-            if element:
-                return str(element)
-        
-        # Fallback: Find largest text container
+        for pat in patterns:
+            el = soup.find(**pat)
+            if el:
+                return str(el)
+
+        # Fallback: biggest text container
         containers = soup.find_all(['div', 'section'])
         if containers:
             return str(max(containers, key=lambda x: len(x.get_text())))
-        
+
         return None
 
     async def extract_content(self, html: str, only_main: bool = True) -> Dict[str, Any]:
-        """Main content extraction method with error handling"""
-        try:
-            soup = BeautifulSoup(html, 'html.parser')
-            metadata = self._extract_metadata(soup)
-            
-            if only_main:
-                content = self._find_main_content(soup)
-                if content:
-                    html = content
-            
-            clean_html = self._clean_html(html)
-            markdown = self.html2text_handler.handle(clean_html)
-            
-            return {
-                'html': clean_html,
-                'markdown': markdown,
-                'metadata': metadata
-            }
-        except Exception as e:
-            logger.error(f"Content extraction failed: {str(e)}")
-            raise
+        """Return cleaned HTML, markdown, and metadata."""
+        soup = BeautifulSoup(html, 'html.parser')
+        metadata = self._extract_metadata(soup)
 
+        if only_main:
+            main = self._find_main_content(soup)
+            if main:
+                html = main
+
+        clean_html = self._clean_html(html)
+        markdown = self.html2text_handler.handle(clean_html)
+
+        return {
+            'html': clean_html,
+            'markdown': markdown,
+            'metadata': metadata
+        }
+
+
+# ----------------------------------------------------------------------
+# Cloudflare handling (unchanged except for small logging tweaks)
+# ----------------------------------------------------------------------
+class CloudflareHandler:
+    def __init__(self):
+        self.cf_challenge_selectors = [
+            "#challenge-form",
+            "#challenge-running",
+            "div[class*='cf-browser-verification']",
+            "#cf-challenge-running"
+        ]
+
+    async def is_cloudflare_challenge(self, browser: webdriver.Chrome) -> bool:
+        """Detect whether the current page is a Cloudflare interstitial."""
+        try:
+            title = browser.title.lower()
+            if "just a moment" in title or "attention required" in title:
+                logger.info("Cloudflare challenge detected via title")
+                return True
+
+            for selector in self.cf_challenge_selectors:
+                try:
+                    if browser.find_element(By.CSS_SELECTOR, selector):
+                        logger.info(f"Cloudflare challenge element found: {selector}")
+                        return True
+                except Exception:
+                    continue
+
+            src = browser.page_source.lower()
+            indicators = [
+                "cloudflare",
+                "ray id:",
+                "please wait while we verify",
+                "please enable cookies",
+                "please complete the security check"
+            ]
+            if any(ind in src for ind in indicators):
+                logger.info("Cloudflare challenge detected via page source")
+                return True
+
+            return False
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error(f"Error checking Cloudflare challenge: {exc}")
+            return False
+
+    async def solve_challenge(self, browser: webdriver.Chrome) -> bool:
+        """Attempt a simple checkbox click if present."""
+        try:
+            # Switch to iframe if there is one
+            try:
+                iframe = WebDriverWait(browser, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "iframe[title*='challenge']"))
+                )
+                browser.switch_to.frame(iframe)
+            except Exception:
+                pass
+
+            # Click a checkbox if we see it
+            try:
+                cb = WebDriverWait(browser, 5).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='checkbox'], .checkbox"))
+                )
+                if cb.is_displayed():
+                    cb.click()
+                    logger.info("Clicked Cloudflare challenge checkbox")
+            except Exception:
+                pass
+
+            browser.switch_to.default_content()
+            return True
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error(f"Error solving Cloudflare challenge: {exc}")
+            return False
+
+    async def wait_for_challenge_completion(self, browser: webdriver.Chrome, timeout: int = 30) -> bool:
+        """Poll until the challenge disappears, trying to solve it a few times."""
+        start = time.time()
+        attempts = 0
+        while time.time() - start < timeout:
+            if not await self.is_cloudflare_challenge(browser):
+                logger.info("Cloudflare challenge resolved")
+                return True
+
+            if attempts < 3:
+                await self.solve_challenge(browser)
+                attempts += 1
+                logger.info(f"Cloudflare solve attempt {attempts}")
+
+            await asyncio.sleep(2)
+
+        logger.warning("Cloudflare challenge timed out")
+        return False
+
+
+# ----------------------------------------------------------------------
+# Browser context – wraps a Selenium instance and adds helpers
+# ----------------------------------------------------------------------
 class BrowserContext:
-    """Enhanced browser context management with anti-detection and better logging"""
+    """Wraps a Selenium Chrome driver, providing navigation, screenshots, etc."""
+
     def __init__(self, browser: webdriver.Chrome, config: Dict[str, Any]):
-        logger.info("Initializing new browser context")
-        self.cloudflare_handler = CloudflareHandler()
         self.browser = browser
         self.config = config
-        self.original_window = browser.current_window_handle
+        self.cloudflare_handler = CloudflareHandler()
         self._setup_browser()
 
     def _setup_browser(self):
-        """Configure browser settings with anti-detection"""
-        logger.debug("Setting up browser configurations")
+        """Apply anti‑detection tricks and performance tweaks."""
+        logger.debug("Applying browser hardening & performance settings")
         try:
-            # Basic window setup
+            # Window size
             self.browser.set_window_size(
                 self.config.get('window_width', 1280),
                 self.config.get('window_height', 1024)
             )
-            
-            # Apply performance optimizations
+
+            # Enable CDP (Chrome DevTools Protocol) features
             self.browser.execute_cdp_cmd('Network.enable', {})
             self.browser.execute_cdp_cmd('Network.setBypassServiceWorker', {'bypass': True})
             self.browser.execute_cdp_cmd('Page.enable', {})
 
-            # Anti-detection measures
+            # Anti‑automation script
             self.browser.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                 "source": """
-                    Object.defineProperty(navigator, 'webdriver', {
-                        get: () => undefined
-                    });
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5]
-                    });
-                    Object.defineProperty(navigator, 'languages', {
-                        get: () => ['en-US', 'en']
-                    });
-                    window.chrome = {
-                        runtime: {}
-                    };
-                    
-                    // Hide automation-related properties
-                    const automationProperties = ['__webdriver_evaluate', '__selenium_evaluate',
-                        '__webdriver_script_function', '__webdriver_script_func', '__webdriver_script_fn',
-                        '__fxdriver_evaluate', '__driver_unwrapped', '__webdriver_unwrapped',
-                        '__driver_evaluate', '__selenium_unwrapped', '__fxdriver_unwrapped'];
-                    
-                    automationProperties.forEach(prop => {
-                        Object.defineProperty(document, prop, {
-                            get: () => undefined,
-                            set: () => undefined
-                        });
-                    });
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
+                    window.chrome = {runtime: {}};
                 """
             })
 
-            # Set realistic user agent and platform
+            # Spoof a realistic user‑agent
             self.browser.execute_cdp_cmd('Network.setUserAgentOverride', {
-                "userAgent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                "userAgent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/120.0.0.0 Safari/537.36"),
                 "platform": "Windows"
             })
 
-            stealth_js = """
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    
-                    window.chrome = {
-                        app: {
-                            isInstalled: false,
-                            InstallState: {
-                                DISABLED: 'disabled',
-                                INSTALLED: 'installed',
-                                NOT_INSTALLED: 'not_installed'
-                            },
-                            RunningState: {
-                                CANNOT_RUN: 'cannot_run',
-                                READY_TO_RUN: 'ready_to_run',
-                                RUNNING: 'running'
-                            }
-                        },
-                        runtime: {
-                            OnInstalledReason: {
-                                CHROME_UPDATE: 'chrome_update',
-                                INSTALL: 'install',
-                                SHARED_MODULE_UPDATE: 'shared_module_update',
-                                UPDATE: 'update'
-                            },
-                            OnRestartRequiredReason: {
-                                APP_UPDATE: 'app_update',
-                                OS_UPDATE: 'os_update',
-                                PERIODIC: 'periodic'
-                            },
-                            PlatformArch: {
-                                ARM: 'arm',
-                                ARM64: 'arm64',
-                                MIPS: 'mips',
-                                MIPS64: 'mips64',
-                                X86_32: 'x86-32',
-                                X86_64: 'x86-64'
-                            },
-                            PlatformNaclArch: {
-                                ARM: 'arm',
-                                MIPS: 'mips',
-                                MIPS64: 'mips64',
-                                X86_32: 'x86-32',
-                                X86_64: 'x86-64'
-                            },
-                            PlatformOs: {
-                                ANDROID: 'android',
-                                CROS: 'cros',
-                                LINUX: 'linux',
-                                MAC: 'mac',
-                                OPENBSD: 'openbsd',
-                                WIN: 'win'
-                            },
-                            RequestUpdateCheckStatus: {
-                                NO_UPDATE: 'no_update',
-                                THROTTLED: 'throttled',
-                                UPDATE_AVAILABLE: 'update_available'
-                            }
-                        }
-                    };
-                """
-            self.browser.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-                'source': stealth_js
-            })
-
-            # Add stealth mode headers
+            # Extra HTTP headers (helps against basic bot detection)
             self.browser.execute_cdp_cmd('Network.setExtraHTTPHeaders', {
                 "headers": {
-                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                     "accept-language": "en-US,en;q=0.9",
                     "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120"',
                     "sec-ch-ua-mobile": "?0",
@@ -376,356 +385,253 @@ class BrowserContext:
                     "sec-fetch-mode": "navigate",
                     "sec-fetch-site": "none",
                     "sec-fetch-user": "?1",
-                    "upgrade-insecure-requests": "1",
-                    "cf-ipcountry": "US",
-                    "cf-connecting-ip": "127.0.0.1",
-                    "cf-ray": "",  # Cloudflare ray ID
-                    "cf-visitor": '{"scheme":"https"}',
-                    "cache-control": "no-cache",
-                    "pragma": "no-cache",
+                    "upgrade-insecure-requests": "1"
                 }
             })
-
-            logger.info("Browser setup completed successfully")
-        except Exception as e:
-            logger.error(f"Failed to setup browser: {str(e)}")
+            logger.info("Browser hardening applied")
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error(f"Failed to apply browser hardening: {exc}")
             raise
 
     async def navigate(self, url: str, timeout: int = 30):
-        """Enhanced navigation with Cloudflare handling"""
-        logger.info(f"Navigating to URL: {url}")
-        start_time = time.time()
-        
+        """Navigate to a URL, handling Cloudflare if it appears."""
+        logger.info(f"Navigating to {url}")
+        start = time.time()
         try:
             self.browser.set_page_load_timeout(timeout)
             self.browser.get(url)
-            
-            # Check for Cloudflare
+
             if await self.cloudflare_handler.is_cloudflare_challenge(self.browser):
-                logger.info("Detected Cloudflare challenge, waiting for completion")
-                challenge_complete = await self.cloudflare_handler.wait_for_challenge_completion(
-                    self.browser,
-                    timeout=timeout
+                CLOUDFLARE_CHALLENGES.inc()
+                logger.info("Cloudflare challenge detected – waiting")
+                solved = await self.cloudflare_handler.wait_for_challenge_completion(
+                    self.browser, timeout=timeout
                 )
-                if not challenge_complete:
-                    raise Exception("Failed to bypass Cloudflare challenge")
-            
+                if solved:
+                    CLOUDFLARE_BYPASS_SUCCESS.inc()
+                else:
+                    CLOUDFLARE_BYPASS_FAILURE.inc()
+                    raise RuntimeError("Unable to bypass Cloudflare challenge")
+
             await self._wait_for_network_idle()
-            logger.info(f"Navigation completed in {time.time() - start_time:.2f}s")
-            
+            logger.info(f"Navigation finished in {time.time() - start:.2f}s")
         except TimeoutException:
-            logger.warning(f"Initial page load timeout for {url}, retrying with longer timeout")
-            try:
-                self.browser.execute_script("window.stop();")
-                self.browser.set_page_load_timeout(timeout * 2)
-                self.browser.get(url)
-                
-                # Check for Cloudflare again after retry
-                if await self.cloudflare_handler.is_cloudflare_challenge(self.browser):
-                    challenge_complete = await self.cloudflare_handler.wait_for_challenge_completion(
-                        self.browser,
-                        timeout=timeout
-                    )
-                    if not challenge_complete:
-                        raise Exception("Failed to bypass Cloudflare challenge")
-                        
-                await self._wait_for_network_idle()
-                logger.info(f"Navigation completed after retry in {time.time() - start_time:.2f}s")
-            except Exception as e:
-                logger.error(f"Navigation failed even after retry: {str(e)}")
-                raise
+            logger.warning("Page load timed out – retrying with larger timeout")
+            self.browser.execute_script("window.stop();")
+            self.browser.set_page_load_timeout(timeout * 2)
+            self.browser.get(url)
+            await self._wait_for_network_idle()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error(f"Navigation error: {exc}")
+            raise
 
     async def _wait_for_network_idle(self, idle_time: float = 1.0, timeout: float = 10.0):
-        """Wait for network activity to settle with detailed logging"""
-        logger.debug("Waiting for network to become idle")
+        """Poll the performance timeline until no new resources appear."""
+        logger.debug("Waiting for network idle")
+        script = """
+            return new Promise(resolve => {
+                let last = performance.getEntriesByType('resource').length;
+                let same = 0;
+                const check = () => {
+                    const cur = performance.getEntriesByType('resource').length;
+                    if (cur === last) {
+                        same += 1;
+                        if (same >= 3) resolve({resources: cur});
+                    } else {
+                        same = 0;
+                        last = cur;
+                    }
+                    setTimeout(check, 300);
+                };
+                check();
+            });
+        """
         try:
-            start_time = time.time()
-            script = """
-                return new Promise((resolve) => {
-                    let lastCount = performance.getEntriesByType('resource').length;
-                    let checkCount = 0;
-                    const interval = setInterval(() => {
-                        const currentCount = performance.getEntriesByType('resource').length;
-                        if (currentCount === lastCount) {
-                            checkCount++;
-                            if (checkCount >= 3) {
-                                clearInterval(interval);
-                                resolve({
-                                    resourceCount: currentCount,
-                                    timeElapsed: performance.now()
-                                });
-                            }
-                        } else {
-                            checkCount = 0;
-                            lastCount = currentCount;
-                        }
-                    }, 333);
-                });
-            """
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.browser.execute_script(script)
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.browser.execute_script(script)
             )
-            logger.debug(f"Network idle achieved. Resources loaded: {result.get('resourceCount', 'unknown')}")
-            logger.debug(f"Network idle wait took {time.time() - start_time:.2f}s")
-        except Exception as e:
-            logger.warning(f"Error waiting for network idle: {str(e)}")
+            logger.debug("Network idle detected")
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(f"Network idle wait failed: {exc}")
 
     async def get_page_source(self) -> str:
-        """Get page source with retry mechanism and logging"""
-        logger.debug("Attempting to get page source")
+        """Return the current page source, retrying on stale references."""
         for attempt in range(3):
             try:
-                source = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self.browser.page_source
+                src = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: self.browser.page_source
                 )
-                logger.debug(f"Page source retrieved successfully, size: {len(source)} bytes")
-                return source
+                return src
             except StaleElementReferenceException:
-                logger.warning(f"Stale element on attempt {attempt + 1}, retrying...")
-                if attempt == 2:
-                    logger.error("Failed to get page source after all retries")
-                    raise
+                logger.warning(f"Stale page source on attempt {attempt + 1}")
                 await asyncio.sleep(0.5)
+        raise RuntimeError("Unable to retrieve page source after retries")
 
-    async def take_screenshot(self) -> str:
-        """Take screenshot with enhanced error handling and logging"""
-        logger.debug("Attempting to take screenshot")
+    async def take_screenshot(self) -> Optional[str]:
+        """Capture a PNG screenshot and return it base64‑encoded."""
         try:
-            screenshot = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.browser.get_screenshot_as_png()
+            png = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.browser.get_screenshot_as_png()
             )
-            encoded = base64.b64encode(screenshot).decode('utf-8')
-            logger.debug(f"Screenshot captured successfully, size: {len(encoded)} bytes")
-            return encoded
-        except Exception as e:
-            logger.error(f"Screenshot failed: {str(e)}")
+            return base64.b64encode(png).decode('utf-8')
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error(f"Screenshot failed: {exc}")
             return None
 
     async def cleanup(self):
-        """Clean up browser resources with logging"""
-        logger.debug("Starting browser context cleanup")
+        """Clear cookies, storage, and navigate to a blank page."""
         try:
             self.browser.delete_all_cookies()
-            logger.debug("Cookies cleared")
-            
+            self.browser.execute_script("window.localStorage.clear();
+                async def cleanup(self):
+        """Clear cookies, storage, and navigate to a blank page."""
+        try:
+            self.browser.delete_all_cookies()
             self.browser.execute_script("window.localStorage.clear();")
             self.browser.execute_script("window.sessionStorage.clear();")
-            logger.debug("Storage cleared")
-            
             self.browser.get("about:blank")
-            logger.debug("Navigated to blank page")
-            
-            logger.info("Browser context cleanup completed successfully")
-        except Exception as e:
-            logger.warning(f"Cleanup error: {str(e)}")
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(f"Issue during browser cleanup: {exc}")
 
+
+# ----------------------------------------------------------------------
+# BrowserPool – manages a bounded set of Selenium browsers
+# ----------------------------------------------------------------------
 class BrowserPool:
-    """Enhanced browser pool management"""
-    def __init__(self, max_browsers: int = 3):
-        self.max_browsers = max_browsers
-        self.available_browsers: List[webdriver.Chrome] = []
-        self.active_browsers: Set[webdriver.Chrome] = set()
-        self.lock = asyncio.Lock()
-        self.browser_metrics = {
-            'created': 0,
-            'reused': 0,
-            'failed': 0,
-            'current_active': 0
-        }
+    """
+    A lightweight async‑compatible pool that creates Selenium Chrome
+    instances on demand, reuses them, and periodically validates health.
+    """
 
-    def _create_browser_options(self) -> Options:
-        """Create optimized browser options"""
-        options = Options()
-        
-        # Performance-focused options
-        options.add_argument('--headless=new')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-extensions')
-        
-        # Memory optimization
-        options.add_argument('--disable-javascript')
-        options.add_argument('--blink-settings=imagesEnabled=false')
-        options.add_argument('--js-flags=--max-old-space-size=512')
-        
-        # Network optimization
-        options.add_argument('--disable-features=NetworkService')
-        options.add_argument('--dns-prefetch-disable')
-        
-        # Additional stability options
-        options.add_argument('--disable-popup-blocking')
-        options.add_argument('--disable-notifications')
-        options.add_argument('--disable-infobars')
-        
-        # Set specific capabilities
-        options.set_capability('goog:loggingPrefs', {'browser': 'ALL'})
-        
-        return options
+    def __init__(self, max_browsers: int = 5):
+        self.max_browsers = max_browsers
+        self._available: asyncio.Queue[BrowserContext] = asyncio.Queue(maxsize=max_browsers)
+        self._active: Set[int] = set()
+        self._lock = asyncio.Lock()
+        self._shutdown = False
+
+    async def _create_browser(self) -> BrowserContext:
+        """Instantiate a fresh Chrome driver with the shared hardening steps."""
+        logger.info("Creating new Selenium Chrome instance")
+        chrome_options = Options()
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
+        chrome_options.add_experimental_option("useAutomationExtension", False)
+
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+
+        ctx = BrowserContext(driver, config={
+            "window_width": 1280,
+            "window_height": 1024,
+        })
+        BROWSER_CREATION_TOTAL.inc()
+        BROWSER_POOL_SIZE.set(self._available.qsize() + len(self._active) + 1)
+        return ctx
 
     async def get_browser(self) -> BrowserContext:
-        """Get a browser with context and metrics tracking"""
-        logger.info("Requesting browser from pool")
-        async with self.lock:
+        """Acquire a browser from the pool, creating one if necessary."""
+        async with self._lock:
+            if self._shutdown:
+                raise RuntimeError("BrowserPool is shutting down")
+
+            # Prefer an existing idle browser
+            if not self._available.empty():
+                ctx = await self._available.get()
+                self._active.add(id(ctx))
+                BROWSER_REUSE_TOTAL.inc()
+                logger.debug(f"Reusing browser {id(ctx)}")
+                return ctx
+
+            # If we haven't hit the limit, spin up a new one
+            if len(self._active) < self.max_browsers:
+                ctx = await self._create_browser()
+                self._active.add(id(ctx))
+                logger.debug(f"Created browser {id(ctx)}")
+                return ctx
+
+        # If we reach here the pool is exhausted – wait for a release
+        logger.info("Pool exhausted, awaiting free browser")
+        ctx = await self._available.get()
+        async with self._lock:
+            self._active.add(id(ctx))
+        return ctx
+
+    async def release_browser(self, ctx: BrowserContext):
+        """Return a browser to the pool (or discard if unhealthy)."""
+        async with self._lock:
+            browser_id = id(ctx)
+            if browser_id not in self._active:
+                logger.warning(f"Tried to release unknown browser {browser_id}")
+                return
+
+            self._active.remove(browser_id)
+
+            # Quick health check – if the session is dead we recreate later
             try:
-                # Try to reuse an existing browser
-                while self.available_browsers:
-                    browser = self.available_browsers.pop()
-                    logger.debug(f"Testing available browser {id(browser)}")
-                    
-                    if await self._is_browser_healthy(browser):
-                        self.active_browsers.add(browser)
-                        self.browser_metrics['reused'] += 1
-                        self.browser_metrics['current_active'] = len(self.active_browsers)
-                        logger.info(f"Reusing existing browser {id(browser)}")
-                        return BrowserContext(browser, {
-                            'window_width': 1280,
-                            'window_height': 1024
-                        })
-                    else:
-                        logger.warning(f"Unhealthy browser {id(browser)} found, cleaning up")
-                        await self._safely_quit_browser(browser)
+                ctx.browser.title  # simple ping
+                await self._available.put(ctx)
+                logger.debug(f"Browser {browser_id} returned to pool")
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.error(f"Browser {browser_id} failed health check: {exc}")
+                await self._destroy_browser(ctx)
 
-                # Create new browser if under limit
-                if len(self.active_browsers) < self.max_browsers:
-                    logger.info("Creating new browser instance")
-                    options = self._create_browser_options()
-                    service = Service(ChromeDriverManager().install())
-                    
-                    try:
-                        browser = webdriver.Chrome(service=service, options=options)
-                        self.active_browsers.add(browser)
-                        self.browser_metrics['created'] += 1
-                        self.browser_metrics['current_active'] = len(self.active_browsers)
-                        logger.info(f"Created new browser {id(browser)}")
-                        return BrowserContext(browser, {
-                            'window_width': 1280,
-                            'window_height': 1024
-                        })
-                    except Exception as e:
-                        self.browser_metrics['failed'] += 1
-                        logger.error(f"Failed to create browser: {str(e)}")
-                        raise
-                else:
-                    logger.error(f"Max browsers ({self.max_browsers}) reached")
-                    raise BrowserError("Too many active browsers")
+            BROWSER_POOL_SIZE.set(self._available.qsize() + len(self._active))
 
-            except Exception as e:
-                logger.error(f"Browser pool error: {str(e)}")
-                raise
-
-    async def _is_browser_healthy(self, browser: webdriver.Chrome) -> bool:
-        """Enhanced browser health check"""
+    async def _destroy_browser(self, ctx: BrowserContext):
+        """Force‑close a Selenium driver."""
         try:
-            logger.debug(f"Checking health of browser {id(browser)}")
-            start_time = time.time()
-            
-            # Basic connectivity check
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: browser.current_url
-            )
-            
-            # Memory check (example threshold: 1GB)
-            try:
-                memory_info = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: browser.execute_script('return window.performance.memory.usedJSHeapSize')
-                )
-                if memory_info > 1024 * 1024 * 1024:  # 1GB
-                    logger.warning(f"Browser {id(browser)} memory usage too high")
-                    return False
-            except:
-                pass  # Memory check is optional
-                
-            logger.debug(f"Browser {id(browser)} health check completed in {time.time() - start_time:.2f}s")
-            return True
-            
-        except Exception as e:
-            logger.warning(f"Browser {id(browser)} health check failed: {str(e)}")
-            return False
-
-    async def release_browser(self, context: BrowserContext):
-        """Release browser with enhanced error handling"""
-        if not context:
-            return
-
-        async with self.lock:
-            browser = context.browser
-            browser_id = id(browser)
-            logger.info(f"Releasing browser {browser_id}")
-            
-            try:
-                await context.cleanup()
-                
-                if browser in self.active_browsers:
-                    self.active_browsers.remove(browser)
-                    self.browser_metrics['current_active'] = len(self.active_browsers)
-                    
-                    # Only reuse browser if pool not full and browser healthy
-                    if len(self.available_browsers) < self.max_browsers:
-                        if await self._is_browser_healthy(browser):
-                            self.available_browsers.append(browser)
-                            logger.info(f"Browser {browser_id} returned to pool")
-                            return
-                
-                logger.info(f"Closing browser {browser_id}")
-                await self._safely_quit_browser(browser)
-                
-            except Exception as e:
-                logger.error(f"Error releasing browser {browser_id}: {str(e)}")
-                await self._safely_quit_browser(browser)
-
-    async def _safely_quit_browser(self, browser: webdriver.Chrome):
-        """Safely quit browser with cleanup verification"""
-        browser_id = id(browser)
-        logger.debug(f"Quitting browser {browser_id}")
-        try:
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                browser.quit
-            )
-            logger.info(f"Browser {browser_id} quit successfully")
-        except Exception as e:
-            logger.warning(f"Error quitting browser {browser_id}: {str(e)}")
+            await asyncio.get_event_loop().run_in_executor(None, ctx.browser.quit)
+            logger.info(f"Destroyed browser {id(ctx)}")
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(f"Error destroying browser {id(ctx)}: {exc}")
 
     async def cleanup(self):
-        """Comprehensive cleanup of all browser resources"""
-        async with self.lock:
-            logger.info("Starting browser pool cleanup")
-            all_browsers = list(self.active_browsers) + self.available_browsers
-            logger.info(f"Cleaning up {len(all_browsers)} browsers")
-            
-            quit_tasks = [self._safely_quit_browser(browser) for browser in all_browsers]
-            await asyncio.gather(*quit_tasks, return_exceptions=True)
-            
-            self.available_browsers.clear()
-            self.active_browsers.clear()
-            self.browser_metrics['current_active'] = 0
-            
-            logger.info("Browser pool cleanup completed")
+        """Gracefully shut down all browsers."""
+        async with self._lock:
+            self._shutdown = True
+            logger.info("Cleaning up BrowserPool – closing all browsers")
+            # Drain the queue first
+            while not self._available.empty():
+                ctx = await self._available.get()
+                await self._destroy_browser(ctx)
 
+            # Close any still‑active browsers (should be none in well‑behaved code)
+            active_ids = list(self._active)
+            for bid in active_ids:
+                # We don't keep a direct reference, so we rely on the fact that
+                # the caller should have already released them. If not, we log.
+                logger.warning(f"Browser {bid} still marked active during shutdown")
+            self._active.clear()
+            BROWSER_POOL_SIZE.set(0)
+            BROWSER_CLEANUP_TOTAL.inc()
+
+
+# ----------------------------------------------------------------------
+# WebScraper – high‑level public API
+# ----------------------------------------------------------------------
 class WebScraper:
     """
-    Scraper that pulls its selector definitions from ``configs/selectors.yaml``.
-    Pass the desired *campaign* name when constructing the instance.
+    Main entry point used by the Lumo backend. It loads a campaign
+    configuration (selectors, pagination rules, etc.) and orchestrates
+    fetching, extraction, caching and metric collection.
     """
 
     # ------------------------------------------------------------------
     # Construction
     # ------------------------------------------------------------------
     def __init__(self, campaign: str, max_concurrent: int = 5):
-        # Load the campaign‑specific configuration once
-        self.cfg = get_campaign_config(campaign)          # ← NEW
+        self.cfg = get_campaign_config(campaign)          # selector/YAML config
         self.browser_pool = BrowserPool(max_browsers=max_concurrent)
         self.content_extractor = ContentExtractor()
         self.structured_data_extractor = StructuredDataExtractor()
         self.semaphore = asyncio.Semaphore(max_concurrent)
-        self.cache_service = None
-        self.active_browsers = set()
+        self.cache_service: Optional[CacheService] = None
+        self.active_browsers: Set[int] = set()
 
     @classmethod
     async def create(
@@ -734,15 +640,15 @@ class WebScraper:
         max_concurrent: int = 5,
         cache_service: Optional[CacheService] = None,
     ) -> "WebScraper":
-        """Factory method – identical to before, just forwards the campaign."""
-        instance = cls(campaign=campaign, max_concurrent=max_concurrent)
-        instance.cache_service = cache_service
-        if instance.cache_service:
-            await instance.cache_service.connect()
-        return instance
+        """Factory that also wires an optional cache."""
+        scraper = cls(campaign, max_concurrent)
+        scraper.cache_service = cache_service
+        if cache_service:
+            await cache_service.connect()
+        return scraper
 
     # ------------------------------------------------------------------
-    # Tiny selector helper – returns the first non‑empty match
+    # Helper: pick first non‑empty selector result
     # ------------------------------------------------------------------
     def _first_match(self, soup: BeautifulSoup, selectors: List[Dict[str, str]]) -> List[Any]:
         """
@@ -750,12 +656,11 @@ class WebScraper:
         and return the first non‑empty result set.
         """
         for sel in selectors:
-            if "css" in sel:
+            if "css" in sel and sel["css"]:
                 result = soup.select(sel["css"])
                 if result:
                     return result
-            elif "xpath" in sel:
-                # Simple XPath support via lxml (fallback if you have it installed)
+            elif "xpath" in sel and sel["xpath"]:
                 try:
                     from lxml import etree
 
@@ -764,18 +669,18 @@ class WebScraper:
                     if result:
                         return result
                 except Exception:
-                    pass  # ignore and continue
-        return []  # nothing matched
+                    continue
+        return []
 
     # ------------------------------------------------------------------
-    # Link extraction (list pages)
+    # List‑page helpers
     # ------------------------------------------------------------------
     def _extract_links(self, page_html: str) -> List[str]:
+        """Return absolute URLs found via the campaign's ``link_selectors``."""
         soup = BeautifulSoup(page_html, "html.parser")
-        raw_links = self._first_match(soup, self.cfg["list_page"]["link_selectors"])
-        # Normalise to href strings – works for both CSS (Tag objects) and XPath (strings)
+        raw = self._first_match(soup, self.cfg["list_page"]["link_selectors"])
         links: List[str] = []
-        for el in raw_links:
+        for el in raw:
             if hasattr(el, "get"):
                 href = el.get("href")
                 if href:
@@ -784,38 +689,39 @@ class WebScraper:
                 links.append(el)
         return links
 
-    # ------------------------------------------------------------------
-    # Pagination detection (list pages)
-    # ------------------------------------------------------------------
     def _has_next_page(self, page_html: str) -> bool:
+        """Detect pagination using CSS/XPath selectors or a fallback regex."""
         soup = BeautifulSoup(page_html, "html.parser")
-        pagination_cfg = self.cfg["list_page"].get("pagination", {})
-        # Try CSS first, then XPath – reuse the helper
-        next_elem = self._first_match(soup, [
-            {"css": pagination_cfg.get("next_css")} if pagination_cfg.get("next_css") else {},
-            {"xpath": pagination_cfg.get("next_xpath")} if pagination_cfg.get("next_xpath") else {}
-        ])
-        if next_elem:
-            return True
-        # Fallback: regex on URLs (if the page contains a “next” link URL)
-        regex = pagination_cfg.get("next_url_regex")
-        if regex:
-            import re
+        pag = self.cfg["list_page"].get("pagination", {})
 
+        next_el = self._first_match(
+            soup,
+            [
+                {"css": pag.get("next_css")} if pag.get("next_css") else {},
+                {"xpath": pag.get("next_xpath")} if pag.get("next_xpath") else {}
+            ],
+        )
+        if next_el:
+            return True
+
+        regex = pag.get("next_url_regex")
+        if regex:
             return bool(re.search(regex, page_html))
         return False
 
     # ------------------------------------------------------------------
-    # Profile‑field extraction (detail pages)
+    # Detail‑page helpers
     # ------------------------------------------------------------------
     def _extract_profile(self, page_html: str) -> Dict[str, List[str]]:
         """
-        Returns a dict where each key (name, email, …) maps to a list of extracted values.
+        Return a mapping ``field_name -> [values...]`` according to the
+        ``profile_page.fields`` section of the campaign config.
         """
         soup = BeautifulSoup(page_html, "html.parser")
         fields_cfg = self.cfg.get("profile_page", {}).get("fields", {})
         result: Dict[str, List[str]] = {}
-        for field_name, selectors in fields_cfg.items():
+
+        for field, selectors in fields_cfg.items():
             matches = self._first_match(soup, selectors)
             values: List[str] = []
             for m in matches:
@@ -824,34 +730,38 @@ class WebScraper:
                 elif isinstance(m, str):
                     values.append(m.strip())
             if values:
-                result[field_name] = values
+                result[field] = values
         return result
 
     # ------------------------------------------------------------------
-    # Existing private helpers (unchanged apart from using the new methods)
+    # Low‑level page fetch (uses the pooled Selenium browser)
     # ------------------------------------------------------------------
     async def _get_page_content(self, url: str, options: Dict[str, Any]) -> Dict[str, Any]:
-        context = await self.browser_pool.get_browser()
+        """
+        Retrieve raw HTML, optional screenshot and link list.
+        Returns a dict compatible with the downstream processing pipeline.
+        """
+        ctx = await self.browser_pool.get_browser()
         try:
-            await context.navigate(url, timeout=options.get("timeout", 30))
+            await ctx.navigate(url, timeout=options.get("timeout", 30))
 
+            # Optional explicit wait for a selector
             if options.get("wait_for_selector"):
-                element_present = EC.presence_of_element_located(
+                elem = EC.presence_of_element_located(
                     (By.CSS_SELECTOR, options["wait_for_selector"])
                 )
-                WebDriverWait(context.browser, options.get("timeout", 30)).until(
-                    element_present
-                )
+                WebDriverWait(ctx.browser, options.get("timeout", 30)).until(elem)
 
-            page_source = await context.get_page_source()
+            page_source = await ctx.get_page_source()
 
             screenshot = None
             if options.get("include_screenshot"):
-                screenshot = await context.take_screenshot()
+                screenshot = await ctx.take_screenshot()
 
-            links = context.browser.execute_script(
+            # Gather a flat list of anchor data via JS (fast, no extra round‑trip)
+            links = ctx.browser.execute_script(
                 """
-                return Array.from(document.getElementsByTagName('a')).map(a => ({
+                return Array.from(document.querySelectorAll('a')).map(a=>({
                     href: a.href,
                     text: a.textContent.trim(),
                     rel: a.rel
@@ -861,103 +771,103 @@ class WebScraper:
 
             return {
                 "content": page_source,
-                "raw_content": page_source
-                if options.get("include_raw_html")
-                else None,
+                "raw_content": page_source if options.get("include_raw_html") else None,
                 "status": 200,
                 "screenshot": screenshot,
                 "links": links,
-                "headers": {},
+                "headers": {},  # placeholder – could be filled via CDP if needed
             }
-
         finally:
-            await self.browser_pool.release_browser(context)
+            await self.browser_pool.release_browser(ctx)
 
     # ------------------------------------------------------------------
-    # scrape / _process_page_data stay exactly as you posted
+    # Public scrape entry point
     # ------------------------------------------------------------------
     async def scrape(self, url: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        High‑level API used by the Lumo backend.
+        Handles caching, concurrency limits, metric collection and
+        graceful error reporting.
+        """
         SCRAPE_REQUESTS.inc()
 
-        try:
-            if self.cache_service and not options.get("bypass_cache"):
-                cached_result = await self.cache_service.get_cached_result(url, options)
-                if cached_result:
-                    return {"success": True, "data": cached_result, "cached": True}
+        # ------------------- Cache lookup -------------------
+        if self.cache_service and not options.get("bypass_cache"):
+            cached = await self.cache_service.get_cached_result(url, options)
+            if cached:
+                return {"success": True, "data": cached, "cached": True}
 
-            async with self.semaphore:
-                try:
-                    with SCRAPE_DURATION.time():
-                        page_data = await self._get_page_content(url, options)
-                        processed_data = await self._process_page_data(
-                            page_data, options, url
-                        )
+        # ------------------- Core scraping -------------------
+        async with self.semaphore:
+            try:
+                with SCRAPE_DURATION.time():
+                    raw = await self._get_page_content(url, options)
+                    processed = await self._process_page_data(raw, options, url)
 
-                        if self.cache_service and not options.get("bypass_cache"):
-                            cache_ttl = options.get(
-                                "cache_ttl",
-                                getattr(settings, "CACHE_TTL", 86400),
-                            )
-                            await self.cache_service.cache_result(
-                                url,
-                                options,
-                                processed_data,
-                                ttl=timedelta(seconds=cache_ttl),
-                            )
+                # ------------------- Store in cache -------------------
+                if self.cache_service and not options.get("bypass_cache"):
+                    ttl = options.get(
+                        "cache_ttl",
+                        getattr(settings, "CACHE_TTL", 86400),
+                    )
+                    await self.cache_service.cache_result(
+                        url,
+                        options,
+                        processed,
+                        ttl=timedelta(seconds=ttl),
+                    )
 
-                        return {
-                            "success": True,
-                            "data": processed_data,
-                            "cached": False,
-                        }
-
-                except Exception as e:
-                    SCRAPE_ERRORS.inc()
-                    logger.error(f"Scraping error for {url}: {str(e)}")
-                    return {
-                        "success": False,
-                        "data": {
-                            "markdown": None,
-                            "html": None,
-                            "rawHtml": None,
-                            "screenshot": None,
-                            "links": None,
-                            "actions": None,
-                            "metadata": {
-                                "title": None,
-                                "description": None,
-                                "language": None,
-                                "sourceURL": url,
-                                "statusCode": 500,
-                                "error": str(e),
-                            },
-                            "llm_extraction": None,
-                            "warning": str(e),
-                            "structured_data": None,
+                return {"success": True, "data": processed, "cached": False}
+            except Exception as exc:  # pylint: disable=broad-except
+                SCRAPE_ERRORS.inc()
+                logger.error(f"Scrape failure for {url}: {exc}")
+                return {
+                    "success": False,
+                    "data": {
+                        "markdown": None,
+                        "html": None,
+                        "rawHtml": None,
+                        "screenshot": None,
+                        "links": None,
+                        "actions": None,
+                        "metadata": {
+                            "title": None,
+                            "description": None,
+                            "language": None,
+                            "sourceURL": url,
+                            "statusCode": 500,
+                            "error": str(exc),
                         },
-                    }
+                        "llm_extraction": None,
+                        "warning": str(exc),
+                        "structured_data": None,
+                    },
+                }
 
-        except Exception as e:
-            logger.error(f"Unexpected error in scrape method: {str(e)}")
-            SCRAPE_ERRORS.inc()
-            raise
-
+    # ------------------------------------------------------------------
+    # Post‑fetch processing (content + structured‑data extraction)
+    # ------------------------------------------------------------------
     async def _process_page_data(
         self, page_data: Dict[str, Any], options: Dict[str, Any], url: str
     ) -> Dict[str, Any]:
+        """
+        Run the heavy‑weight content extractor and the (lighter) structured‑data
+        extractor in parallel, then assemble the final response payload.
+        """
         try:
-            content_task = self.content_extractor.extract_content(
+            # Content extraction (async)
+            content_fut = self.content_extractor.extract_content(
                 page_data["content"], options.get("only_main", True)
             )
 
-            structured_data_future = asyncio.get_event_loop().run_in_executor(
+            # Structured‑data extraction (CPU‑bound, run in thread pool)
+            sd_fut = asyncio.get_event_loop().run_in_executor(
                 None, self.structured_data_extractor.extract_all, page_data["content"]
             )
 
-            processed_content, structured_data = await asyncio.gather(
-                content_task, structured_data_future
-            )
+            processed_content, structured_data = await asyncio.gather(content_fut, sd_fut)
 
+            # Merge metadata from the content extractor
             metadata = {
                 "title": None,
                 "description": None,
@@ -969,8 +879,9 @@ class WebScraper:
             if processed_content.get("metadata"):
                 metadata.update(processed_content["metadata"])
 
+            # Normalise link list
             formatted_links = (
-                [link["href"] for link in page_data.get("links", []) if link.get("href")]
+                [lnk["href"] for lnk in page_data.get("links", []) if lnk.get("href")]
                 if page_data.get("links")
                 else None
             )
@@ -979,7 +890,7 @@ class WebScraper:
                 "markdown": processed_content["markdown"],
                 "html": processed_content["html"],
                 "rawHtml": page_data["raw_content"],
-                "screenshot": None,
+                "screenshot": page_data.get("screenshot"),
                 "links": formatted_links,
                 "actions": (
                     {"screenshots": [page_data["screenshot"]]}
@@ -991,118 +902,29 @@ class WebScraper:
                 "warning": None,
                 "structured_data": structured_data,
             }
-
-        except Exception as e:
-            logger.error(f"Data processing error: {str(e)}")
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error(f"Error during post‑processing: {exc}")
             raise
 
+    # ------------------------------------------------------------------
+    # Graceful shutdown
+    # ------------------------------------------------------------------
     async def cleanup(self):
-        """Cleanup resources"""
+        """Close the browser pool and any attached cache connections."""
         await self.browser_pool.cleanup()
+        if self.cache_service:
+            await self.cache_service.disconnect()
 
-class CloudflareHandler:
-    def __init__(self):
-        self.cf_challenge_selectors = [
-            "#challenge-form",
-            "#challenge-running",
-            "div[class*='cf-browser-verification']",
-            "#cf-challenge-running"
-        ]
 
-    async def is_cloudflare_challenge(self, browser: webdriver.Chrome) -> bool:
-        """Check if page has Cloudflare challenge"""
-        try:
-            # Check page title first
-            title = browser.title.lower()
-            if "just a moment" in title or "attention required" in title:
-                logger.info("Detected Cloudflare challenge page by title")
-                return True
-                
-            # Check for challenge elements
-            for selector in self.cf_challenge_selectors:
-                try:
-                    if browser.find_element(By.CSS_SELECTOR, selector):
-                        logger.info(f"Detected Cloudflare challenge element: {selector}")
-                        return True
-                except:
-                    continue
-                    
-            # Check page source for common Cloudflare text
-            page_source = browser.page_source.lower()
-            cf_indicators = [
-                "cloudflare",
-                "ray id:",
-                "please wait while we verify",
-                "please enable cookies",
-                "please complete the security check"
-            ]
-            
-            for indicator in cf_indicators:
-                if indicator in page_source:
-                    logger.info(f"Detected Cloudflare challenge by text: {indicator}")
-                    return True
-                    
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error checking Cloudflare challenge: {e}")
-            return False
-            
-    async def solve_challenge(self, browser: webdriver.Chrome) -> bool:
-        logger.info("Attempting to solve Cloudflare challenge")
-        try:
-            # Wait for iframe if it exists
-            try:
-                iframe = WebDriverWait(browser, 5).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "iframe[title*='challenge']"))
-                )
-                browser.switch_to.frame(iframe)
-            except:
-                pass
+# ----------------------------------------------------------------------
+# Module‑level convenience: a singleton for quick one‑off calls
+# ----------------------------------------------------------------------
+_default_scraper: Optional[WebScraper] = None
 
-            # Try to find and click the checkbox
-            try:
-                checkbox = WebDriverWait(browser, 5).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='checkbox'], .checkbox"))
-                )
-                if checkbox.is_displayed():
-                    checkbox.click()
-                    logger.info("Clicked challenge checkbox")
-            except:
-                pass
 
-            # Switch back to main content
-            browser.switch_to.default_content()
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error solving challenge: {e}")
-            return False
-
-    async def wait_for_challenge_completion(self, browser: webdriver.Chrome, timeout: int = 30) -> bool:
-        """Modified to actively solve challenge"""
-        logger.info("Waiting for Cloudflare challenge completion")
-        start_time = time.time()
-        solve_attempts = 0
-        
-        try:
-            while time.time() - start_time < timeout:
-                if not await self.is_cloudflare_challenge(browser):
-                    logger.info("Cloudflare challenge completed")
-                    return True
-                
-                # Attempt to solve every 5 seconds
-                if solve_attempts < 3:  # Limit solve attempts
-                    await self.solve_challenge(browser)
-                    solve_attempts += 1
-                    logger.info(f"Challenge solve attempt {solve_attempts}")
-                
-                await asyncio.sleep(2)
-            
-            logger.warning("Cloudflare challenge timeout")
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error waiting for challenge completion: {e}")
-            return False
-
+async def get_default_scraper(campaign: str = "default") -> WebScraper:
+    """Lazy‑load a shared scraper instance (useful for simple scripts)."""
+    global _default_scraper
+    if _default_scraper is None:
+        _default_scraper = await WebScraper.create(campaign)
+    return _default_scraper
