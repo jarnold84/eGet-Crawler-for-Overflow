@@ -68,9 +68,19 @@ BROWSER_FAILURES = Counter('browser_failures_total', 'Total number of browser cr
 BROWSER_CLEANUP_TOTAL = Counter('browser_cleanup_total', 'Total number of browser cleanup operations')
 
 # Browser Health Metrics
-BROWSER_MEMORY_USAGE = Histogram('browser_memory_usage_bytes', 'Browser memory usage in bytes',
-                                buckets=[100*1024*1024, 500*1024*1024, 1024*1024*1024])
-BROWSER_HEALTH_CHECK_DURATION = Histogram('browser_health_check_seconds', 'Time spent on browser health checks')
+BROWSER_MEMORY_USAGE = Histogram(
+    'browser_memory_usage_bytes',
+    'Browser memory usage in bytes',
+    buckets=[
+        100 * 1024 * 1024,      # 100 MiB
+        500 * 1024 * 1024,      # 500 MiB
+        1024 * 1024 * 1024,     # 1 GiB
+    ],
+)
+BROWSER_HEALTH_CHECK_DURATION = Histogram(
+    'browser_health_check_seconds',
+    'Time spent on browser health checks',
+)
 
 # Navigation Metrics
 PAGE_LOAD_DURATION = Histogram('page_load_duration_seconds', 'Time taken for page loads')
@@ -519,7 +529,7 @@ class BrowserPool:
             self._available.qsize()
             + len(self._active)
             + 1
-        )  
+        )
         return ctx
 
     async def get_browser(self) -> BrowserContext:
