@@ -481,16 +481,17 @@ class BrowserContext:
     async def cleanup(self):
         """Clear cookies, storage, and navigate to a blank page."""
         try:
+            # Remove all cookies
             self.browser.delete_all_cookies()
-            self.browser.execute_script("window.localStorage.clear();
-                async def cleanup(self):
-        """Clear cookies, storage, and navigate to a blank page."""
-        try:
-            self.browser.delete_all_cookies()
+
+            # Clear localStorage and sessionStorage
             self.browser.execute_script("window.localStorage.clear();")
             self.browser.execute_script("window.sessionStorage.clear();")
+
+            # Navigate to a neutral page so the driver stays alive
             self.browser.get("about:blank")
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:                     # <-- added except clause
+            # Broad‑except is fine for a cleanup routine; we just log the issue.
             logger.warning(f"Issue during browser cleanup: {exc}")
 
 
