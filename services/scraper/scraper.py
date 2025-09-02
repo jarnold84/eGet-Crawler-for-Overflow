@@ -498,6 +498,7 @@ class BrowserPool:
         """Instantiate a fresh Chrome driver with the shared hardening steps."""
         logger.info("Creating new Selenium Chrome instance")
         chrome_options = Options()
+        chrome_options.binary_location = "/usr/bin/chromium"
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--no-sandbox")
