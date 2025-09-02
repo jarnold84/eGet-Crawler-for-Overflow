@@ -9,13 +9,27 @@ import re
 import time
 from datetime import timedelta
 from functools import wraps
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
-# ---------- Playwright (optional) ----------
+# ----------------------------------------------------------------------
+# Conditional alias for the Playwright Page class (used only in type hints)
+# ----------------------------------------------------------------------
+# ``PlaywrightPage`` is referenced in the ``BrowserContext`` constructor
+# When static type checking runs (IDE, mypy, Pylance) we import the real
+# class so the checker knows the exact type.  At runtime we fall back to
+# ``Any`` – the code works even if Playwright isn’t installed.
+if TYPE_CHECKING:                     # pragma: no cover
+    from playwright.async_api import Page as PlaywrightPage
+else:
+    PlaywrightPage = Any  # type: ignore
+
+# Import the *module* name so forward‑reference strings like
+# "playwright.async_api.Page" don’t raise “undefined variable” warnings.
+# This import is deliberately guarded – it won’t crash if Playwright isn’t present.
 try:
-    from playwright.async_api import async_playwright
+    import playwright  # noqa: F401  (imported for type‑checking only)
 except Exception:  # pragma: no cover
-    async_playwright = None  # type: ignore
+    playwright = None  # type: ignore
 
 # ---------- Selenium / WebDriver ----------
 from selenium import webdriver
@@ -322,53 +336,132 @@ class CloudflareHandler:
 
 
 # ----------------------------------------------------------------------
-# Browser context – wraps a Selenium instance and adds helpers
+# Browser – thin wrapper that presents a Selenium‑like API over Playwright
+# ----------------------------------------------------------------------
+class Browser:
+    """
+    Wrapper around Playwright's Browser, BrowserContext, and Page objects.
+    Provides the small subset of Selenium‑style methods that the rest of the
+    scraper pool expects (set_page_load_timeout, title, quit).
+    """
+    def __init__(self, browser: Any, context: Any, page: Any):
+        # Playwright objects
+        self.browser = browser      # Playwright Browser
+        self.context = context      # Playwright BrowserContext
+        self.page = page            # Playwright Page
+
+        # ------------------------------------------------------------------
+        # Compatibility shim – the rest of the code expects Selenium‑like APIs.
+        # ------------------------------------------------------------------
+
+    # Selenium‑style timeout setter → Playwright navigation timeout (ms)
+    def set_page_load_timeout(self, seconds: int) -> None:  # pragma: no cover
+        """Set the maximum time to wait for a page load (seconds)."""
+        timeout_ms = seconds * 1000
+        # Newer Playwright versions expose set_default_navigation_timeout;
+        # older ones use set_default_timeout.
+        try:
+            self.context.set_default_navigation_timeout(timeout_ms)
+        except Exception:
+            self.context.set_default_timeout(timeout_ms)
+
+    # Selenium‑style `title` property → Playwright page title
+    @property
+    def title(self) -> str:  # pragma: no cover
+        """Return the current page title."""
+        try:
+            return self.page.title()
+        except Exception:
+            return ""
+
+    # Selenium‑style `quit` → Playwright browser close
+    def quit(self) -> None:  # pragma: no cover
+        """Close the underlying Playwright browser."""
+        try:
+            self.browser.close()
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------------
+# BrowserContext – wraps a Playwright page and adds helpers
 # ----------------------------------------------------------------------
 class BrowserContext:
-    """Wraps a Selenium Chrome driver, providing navigation, screenshots, etc."""
+    """
+    Wraps a Playwright Page, providing navigation, screenshots, etc.
+    """
+    # NOTE: ``page`` is a Playwright ``Page`` instance.
+    # We import the class only when type‑checking so the runtime does not
+    # require Playwright to be present.
+    def __init__(self, page: "PlaywrightPage", config: Dict[str, Any]):
+        # ``page`` is a Playwright ``Page`` instance – the actual object
+        # passed at runtime will be whatever Playwright returns.
+        self.page = page
+        # The underlying Playwright **Browser** that created this page.
+        # ``page.context`` gives us the BrowserContext, and ``.browser`` gives the Browser.
+        # Guard against the case where Playwright isn’t available (tests, CI).
+        try:
+            self.browser = page.context.browser  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover
+            self.browser = None
 
-    def __init__(self, browser: webdriver.Chrome, config: Dict[str, Any]):
-        self.browser = browser
-        self.config = config
         self.cloudflare_handler = CloudflareHandler()
-        self._setup_browser()
 
-    def _setup_browser(self):
-        """Apply anti‑detection tricks and performance tweaks."""
+        # Hardening will be applied later – callers must await it.
+        # e.g.  await ctx.apply_hardening()
+
+    # ------------------------------------------------------------------
+    # Helper used by the pool’s health‑check and destroy logic
+    # ------------------------------------------------------------------
+    async def close(self) -> None:
+        """Close the page (and its browser if we own it)."""
+        if self.page:
+            await self.page.close()
+        # If we created the browser ourselves, shut it down.
+        if getattr(self, "browser", None):
+            try:
+                await self.browser.close()
+            except Exception:  # pragma: no cover
+                pass
+
+    async def apply_hardening(self) -> None:
+        """Apply anti‑detection tricks and performance tweaks for Playwright."""
         logger.debug("Applying browser hardening & performance settings")
         try:
-            # Window size
-            self.browser.set_window_size(
-                self.config.get('window_width', 1280),
-                self.config.get('window_height', 1024)
+            # Enforce viewport size (replaces Selenium's set_window_size)
+            await self.page.set_viewport_size(
+                {
+                    "width": self.config.get("window_width", 1280),
+                    "height": self.config.get("window_height", 1024),
+                }
             )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"Failed to set viewport size: {exc}")
 
-            # Enable CDP (Chrome DevTools Protocol) features
-            self.browser.execute_cdp_cmd('Network.enable', {})
-            self.browser.execute_cdp_cmd('Network.setBypassServiceWorker', {'bypass': True})
-            self.browser.execute_cdp_cmd('Page.enable', {})
+            # Set sensible timeouts (Playwright equivalents of Selenium timeouts)
+            await self.page.context.set_default_navigation_timeout(30_000)  # 30 s
+            await self.page.context.set_default_timeout(30_000)            # 30 s
 
             # Anti‑automation script
-            self.browser.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-                "source": """
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
-                    window.chrome = {runtime: {}};
+            await self.page.add_init_script(
                 """
-            })
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
+                window.chrome = {runtime: {}};
+                """
+            )
 
             # Spoof a realistic user‑agent
-            self.browser.execute_cdp_cmd('Network.setUserAgentOverride', {
-                "userAgent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) "
-                              "Chrome/120.0.0.0 Safari/537.36"),
-                "platform": "Windows"
-            })
+            await self.page.context.set_user_agent(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
 
             # Extra HTTP headers (helps against basic bot detection)
-            self.browser.execute_cdp_cmd('Network.setExtraHTTPHeaders', {
-                "headers": {
+            await self.page.context.set_extra_http_headers(
+                {
                     "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                     "accept-language": "en-US,en;q=0.9",
                     "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120"',
@@ -378,9 +471,9 @@ class BrowserContext:
                     "sec-fetch-mode": "navigate",
                     "sec-fetch-site": "none",
                     "sec-fetch-user": "?1",
-                    "upgrade-insecure-requests": "1"
+                    "upgrade-insecure-requests": "1",
                 }
-            })
+            )
             logger.info("Browser hardening applied")
         except Exception as exc:  # pylint: disable=broad-except
             logger.error(f"Failed to apply browser hardening: {exc}")
@@ -472,18 +565,18 @@ class BrowserContext:
             return None
 
     async def cleanup(self):
-        """Clear cookies, storage, and navigate to a blank page."""
+        """Clear cookies, storage, and close the Playwright page."""
         try:
-            # Remove all cookies
-            self.browser.delete_all_cookies()
+            # Remove all cookies from the page's context
+            await self.browser.context.clear_cookies()
 
             # Clear localStorage and sessionStorage
-            self.browser.execute_script("window.localStorage.clear();")
-            self.browser.execute_script("window.sessionStorage.clear();")
+            await self.browser.evaluate("window.localStorage.clear();")
+            await self.browser.evaluate("window.sessionStorage.clear();")
 
-            # Navigate to a neutral page so the driver stays alive
-            self.browser.get("about:blank")
-        except Exception as exc:                     # <-- added except clause
+            # Close the page (and its context)
+            await self.browser.close()
+        except Exception as exc:
             # Broad‑except is fine for a cleanup routine; we just log the issue.
             logger.warning(f"Issue during browser cleanup: {exc}")
 
@@ -506,11 +599,10 @@ class BrowserPool:
 
     async def _create_browser(self) -> BrowserContext:
         """Instantiate a fresh head‑less Chromium browser using Playwright."""
+        # Import lazily – the optional block above guarantees the name exists.
         from playwright.async_api import async_playwright
-
         logger.info("Creating new Playwright Chromium instance")
-
-        # Start Playwright and launch a head‑less Chromium that matches the bundled binary
+        # Start Playwright only when we actually need it.
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
             headless=True,
@@ -521,7 +613,7 @@ class BrowserPool:
                 "--disable-blink-features=AutomationControlled",
             ],
         )
-        # Create an isolated browser context (equivalent to a Selenium driver)
+        # Context already has the desired viewport
         context = await self._browser.new_context(
             viewport={"width": 1280, "height": 1024},
             java_script_enabled=True,
@@ -529,10 +621,11 @@ class BrowserPool:
         page = await context.new_page()
 
         # Wrap the Playwright page in the existing BrowserContext abstraction
-        ctx = BrowserContext(page, config={
-            "window_width": 1280,
-            "window_height": 1024,
-        })
+        ctx = BrowserContext(page, config={"window_width": 1280, "window_height": 1024})
+
+        BROWSER_CREATION_TOTAL.inc()
+        BROWSER_POOL_SIZE.set(self._available.qsize() + len(self._active) + 1)
+        return ctx
 
         # Update Prometheus metrics
         BROWSER_CREATION_TOTAL.inc()

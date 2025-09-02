@@ -1,0 +1,20 @@
+@@
+-    # NOTE: ``page`` is a Playwright ``Page`` instance.  Using a quoted
+-    # forward‑reference keeps the annotation valid even when Playwright is
+-    # unavailable at import time.
+-    def __init__(self, page: "playwright.async_api.Page", config: Dict[str, Any]):
+-        # NOTE: ``page`` is a Playwright ``Page`` instance.  Using a quoted
+-        # forward‑reference keeps the annotation valid even when Playwright is
+-        # unavailable at import time.
+-        self.page = page
++    # NOTE: ``page`` is a Playwright ``Page`` instance.
++    # We import the class only when type‑checking so the runtime does not
++    # require Playwright to be present.
++    def __init__(self, page: "PlaywrightPage", config: Dict[str, Any]):
++        # ``page`` is a Playwright ``Page`` instance – the actual object
++        # passed at runtime will be whatever Playwright returns.
++        self.page = page
+         self.config = config
+         self.cloudflare_handler = CloudflareHandler()
+         # Hardening will be applied later – callers must await it.
+         # e.g.  await ctx.apply_hardening()
