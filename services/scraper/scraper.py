@@ -70,6 +70,60 @@ from services.crawler.config_loader import get_campaign_config
 # Metrics for monitoring
 from prometheus_client import Counter, Histogram, Gauge
 
+# ----------------------------------------------------------------------
+# Compatibility shim – makes a Playwright browser look like the small
+# subset of Selenium that the rest of the code expects.
+# ----------------------------------------------------------------------
+class SeleniumLikeBrowser:
+    """
+    Thin wrapper exposing the three Selenium‑style members used by the
+    scraper pool: ``set_page_load_timeout``, ``title`` and ``quit``.
+    All other attributes are delegated to the underlying Playwright
+    objects (browser, context, page) so they can still be accessed if
+    needed.
+    """
+    def __init__(self, browser: Any, context: Any, page: Any):
+        self._browser = browser      # Playwright Browser
+        self._context = context      # Playwright BrowserContext
+        self._page = page            # Playwright Page
+
+    # ----- Selenium‑style API -------------------------------------------------
+    def set_page_load_timeout(self, seconds: int) -> None:  # pragma: no cover
+        """Playwright uses milliseconds for navigation timeouts."""
+        timeout_ms = seconds * 1000
+        try:
+            # Newer Playwright versions
+            self._context.set_default_navigation_timeout(timeout_ms)
+        except Exception:
+            # Fallback for older releases
+            self._context.set_default_timeout(timeout_ms)
+
+    @property
+    def title(self) -> str:  # pragma: no cover
+        """Return the current page title."""
+        try:
+            return self._page.title()
+        except Exception:
+            return ""
+
+    def quit(self) -> None:  # pragma: no cover
+        """Close the underlying Playwright browser."""
+        try:
+            self._browser.close()
+        except Exception:
+            pass
+
+    # ----- Delegation helpers -------------------------------------------------
+    def __getattr__(self, name: str) -> Any:
+        """
+        Forward any unknown attribute to the underlying Playwright objects.
+        This keeps the wrapper flexible without having to expose every method manually.
+        """
+        for obj in (self._browser, self._context, self._page):
+            if hasattr(obj, name):
+                return getattr(obj, name)
+        raise AttributeError(name)
+
 SCRAPE_REQUESTS = Counter('scraper_requests_total', 'Total number of scrape requests')
 SCRAPE_ERRORS = Counter('scraper_errors_total', 'Total number of scrape errors')
 SCRAPE_DURATION = Histogram('scraper_duration_seconds', 'Time spent scraping URLs')
@@ -393,17 +447,18 @@ class BrowserContext:
     # NOTE: ``page`` is a Playwright ``Page`` instance.
     # We import the class only when type‑checking so the runtime does not
     # require Playwright to be present.
-    def __init__(self, page: "PlaywrightPage", config: Dict[str, Any]):
-        # ``page`` is a Playwright ``Page`` instance – the actual object
-        # passed at runtime will be whatever Playwright returns.
-        self.page = page
-        # The underlying Playwright **Browser** that created this page.
-        # ``page.context`` gives us the BrowserContext, and ``.browser`` gives the Browser.
-        # Guard against the case where Playwright isn’t available (tests, CI).
-        try:
-            self.browser = page.context.browser  # type: ignore[attr-defined]
-        except Exception:  # pragma: no cover
-            self.browser = None
+    def __init__(self, driver: SeleniumLikeBrowser, config: Dict[str, Any]):
+        """
+        ``driver`` is the Selenium‑compatible shim that wraps the real
+        Playwright objects.  All existing code that expects a Selenium‑like
+        ``browser`` attribute will now work because the shim provides those
+        members.
+        """
+        # Keep a reference to the Playwright page for any direct calls
+        self.page = driver._page          # type: ignore[attr-defined]
+        # Expose the shim as ``self.browser`` – this is what the rest of the
+        # scraper pool uses (title, set_page_load_timeout, quit, etc.).
+        self.browser = driver
 
         self.cloudflare_handler = CloudflareHandler()
 
@@ -429,7 +484,7 @@ class BrowserContext:
         logger.debug("Applying browser hardening & performance settings")
         try:
             # Enforce viewport size (replaces Selenium's set_window_size)
-            await self.page.set_viewport_size(
+            await self.browser._page.set_viewport_size(
                 {
                     "width": self.config.get("window_width", 1280),
                     "height": self.config.get("window_height", 1024),
@@ -439,8 +494,8 @@ class BrowserContext:
             logger.warning(f"Failed to set viewport size: {exc}")
 
             # Set sensible timeouts (Playwright equivalents of Selenium timeouts)
-            await self.page.context.set_default_navigation_timeout(30_000)  # 30 s
-            await self.page.context.set_default_timeout(30_000)            # 30 s
+            await self.browser._context.set_default_navigation_timeout(30_000)  # 30 s
+            await self.browser._context.set_default_timeout(30_000)            # 30 s
 
             # Anti‑automation script
             await self.page.add_init_script(
@@ -453,14 +508,14 @@ class BrowserContext:
             )
 
             # Spoof a realistic user‑agent
-            await self.page.context.set_user_agent(
+            await self.browser._context.set_user_agent(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             )
 
             # Extra HTTP headers (helps against basic bot detection)
-            await self.page.context.set_extra_http_headers(
+            await self.browser._context.set_extra_http_headers(
                 {
                     "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                     "accept-language": "en-US,en;q=0.9",
