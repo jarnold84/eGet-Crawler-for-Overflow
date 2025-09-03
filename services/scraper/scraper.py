@@ -10,6 +10,7 @@ import time
 from datetime import timedelta
 from functools import wraps
 from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
+from queue import Queue
 
 # ----------------------------------------------------------------------
 # Conditional alias for the Playwright Page class (used only in type hints)
@@ -69,6 +70,9 @@ from services.crawler.config_loader import get_campaign_config
 
 # Metrics for monitoring
 from prometheus_client import Counter, Histogram, Gauge
+
+# Max Browsers
+MAX_BROWSERS = 5
 
 # ----------------------------------------------------------------------
 # Compatibility shim – makes a Playwright browser look like the small
@@ -641,22 +645,40 @@ class BrowserContext:
 # ----------------------------------------------------------------------
 class BrowserPool:
     """
-    A lightweight async‑compatible pool that creates Selenium Chrome
+    A lightweight async‑compatible pool that creates Playwright Chromium
     instances on demand, reuses them, and periodically validates health.
     """
 
-    def __init__(self, max_browsers: int = 5):
-        self.max_browsers = max_browsers
-        self._available: asyncio.Queue[BrowserContext] = asyncio.Queue(maxsize=max_browsers)
-        self._active: Set[int] = set()
-        self._lock = asyncio.Lock()
-        self._shutdown = False
+    def __init__(self, maxsize: int = 5, config: dict | None = None):
+        """
+        Parameters
+        ----------
+        maxsize: int
+            Maximum number of concurrent browsers.
+        config: dict | None
+            Optional dictionary of default BrowserContext options
+            (e.g. window size, timeout).  It will be passed to every
+            BrowserContext that the pool creates.
+        """
+        self._maxsize = maxsize
+        self._available = Queue(maxsize)
+        self._active = set()
+        self._playwright = None
+        self._config = config or {}
+
+        # ---- internal bookkeeping -------------------------------------------------
+        self._lock = asyncio.Lock()          # protects pool state
+        self.max_browsers = maxsize           # convenience alias used in get_browser
+        self._shutdown = False               # set to True during cleanup
+        # -------------------------------------------------------------------------
 
     async def _create_browser(self) -> BrowserContext:
         """Instantiate a fresh head‑less Chromium browser using Playwright."""
         # Import lazily – the optional block above guarantees the name exists.
         from playwright.async_api import async_playwright
+
         logger.info("Creating new Playwright Chromium instance")
+
         # Start Playwright only when we actually need it.
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
@@ -668,27 +690,33 @@ class BrowserPool:
                 "--disable-blink-features=AutomationControlled",
             ],
         )
-        # Context already has the desired viewport
+
+        # Create a browser context with the desired viewport.
         context = await self._browser.new_context(
             viewport={"width": 1280, "height": 1024},
             java_script_enabled=True,
         )
         page = await context.new_page()
 
-        # Wrap the Playwright page in the existing BrowserContext abstraction
-        ctx = BrowserContext(page, config={"window_width": 1280, "window_height": 1024})
+        # ------------------------------------------------------------------
+        # Build the Selenium‑compatible shim and hand it to BrowserContext.
+        # ------------------------------------------------------------------
+        shim = SeleniumLikeBrowser(
+            browser=self._browser,   # the Playwright Browser we just launched
+            context=context,
+            page=page,
+        )
 
-        BROWSER_CREATION_TOTAL.inc()
-        BROWSER_POOL_SIZE.set(self._available.qsize() + len(self._active) + 1)
-        return ctx
+        # Return the BrowserContext that now receives the shim.
+        ctx = BrowserContext(driver=shim, config=self._config)
 
-        # Update Prometheus metrics
+        # ----------------------- Prometheus metrics -----------------------
         BROWSER_CREATION_TOTAL.inc()
         BROWSER_POOL_SIZE.set(
-            self._available.qsize()
-            + len(self._active)
-            + 1
+            self._available.qsize() + len(self._active) + 1
         )
+        # ------------------------------------------------------------------
+
         return ctx
 
     async def get_browser(self) -> BrowserContext:
@@ -712,7 +740,7 @@ class BrowserPool:
                 logger.debug(f"Created browser {id(ctx)}")
                 return ctx
 
-        # If we reach here the pool is exhausted – wait for a release
+        # Pool exhausted – wait for a free browser
         logger.info("Pool exhausted, awaiting free browser")
         ctx = await self._available.get()
         async with self._lock:
@@ -741,7 +769,7 @@ class BrowserPool:
             BROWSER_POOL_SIZE.set(self._available.qsize() + len(self._active))
 
     async def _destroy_browser(self, ctx: BrowserContext):
-        """Force‑close a Selenium driver."""
+        """Force‑close a Selenium‑like driver."""
         try:
             await asyncio.get_event_loop().run_in_executor(None, ctx.browser.quit)
             logger.info(f"Destroyed browser {id(ctx)}")
@@ -753,18 +781,17 @@ class BrowserPool:
         async with self._lock:
             self._shutdown = True
             logger.info("Cleaning up BrowserPool – closing all browsers")
+
             # Drain the queue first
             while not self._available.empty():
                 ctx = await self._available.get()
                 await self._destroy_browser(ctx)
 
-            # Close any still‑active browsers (should be none in well‑behaved code)
-            active_ids = list(self._active)
-            for bid in active_ids:
-                # We don't keep a direct reference, so we rely on the fact that
-                # the caller should have already released them. If not, we log.
+            # Log any browsers that were still marked active (should be none)
+            for bid in list(self._active):
                 logger.warning(f"Browser {bid} still marked active during shutdown")
             self._active.clear()
+
             BROWSER_POOL_SIZE.set(0)
             BROWSER_CLEANUP_TOTAL.inc()
 
@@ -783,8 +810,28 @@ class WebScraper:
     # Construction
     # ------------------------------------------------------------------
     def __init__(self, campaign: str, max_concurrent: int = 5):
-        self.cfg = get_campaign_config(campaign)          # selector/YAML config
-        self.browser_pool = BrowserPool(max_browsers=max_concurrent)
+        # Load the per‑campaign configuration (YAML, selector, etc.)
+        self.cfg = get_campaign_config(campaign)
+
+        # ------------------------------------------------------------------
+        # Default BrowserContext configuration – tweak as needed.
+        # These values are passed to every BrowserContext the pool creates.
+        # ------------------------------------------------------------------
+        default_ctx_config = {
+            "window_width": 1280,
+            "window_height": 1024,
+            # Add any other Playwright context options you want as defaults,
+            # e.g. "locale": "en-US", "timezone_id": "UTC", etc.
+        }
+
+        # Create the shared BrowserPool and keep a reference on the instance.
+        # MAX_BROWSERS is defined elsewhere in the module (or you can replace
+        # it with a concrete integer, e.g. 5).
+        self.pool = BrowserPool(maxsize=MAX_BROWSERS, config=default_ctx_config)
+
+        # ------------------------------------------------------------------
+        # The rest of the scraper’s components.
+        # ------------------------------------------------------------------
         self.content_extractor = ContentExtractor()
         self.structured_data_extractor = StructuredDataExtractor()
         self.semaphore = asyncio.Semaphore(max_concurrent)
