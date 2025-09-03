@@ -138,17 +138,20 @@ class SeleniumLikeBrowser:
             self._context.set_default_timeout(timeout_ms)
 
     @property
-    def title(self) -> str:  # pragma: no cover
-        """Return the current page title."""
+    def title(self):  # pragma: no cover
+        """Return a coroutine yielding the current page title."""
         try:
             return self._page.title()
         except Exception:
-            return ""
+            async def _empty():
+                return ""
 
-    def quit(self) -> None:  # pragma: no cover
+            return _empty()
+
+    async def quit(self) -> None:  # pragma: no cover
         """Close the underlying Playwright browser."""
         try:
-            self._browser.close()
+            await self._browser.close()
         except Exception:
             pass
 
@@ -508,7 +511,7 @@ class BrowserContext:
         # If we created the browser ourselves, shut it down.
         if getattr(self, "browser", None):
             try:
-                await self.browser.close()
+                await self.browser.quit()
             except Exception:  # pragma: no cover
                 pass
 
@@ -656,44 +659,59 @@ class BrowserPool:
         logger.info("Creating new Playwright Chromium instance")
 
         # Start Playwright only when we actually need it.
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-gpu",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-            ],
-        )
+        pw = await async_playwright().start()
+        browser = None
+        try:
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-gpu",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+            )
 
-        # Create a browser context with the desired viewport.
-        context = await self._browser.new_context(
-            viewport={"width": 1280, "height": 1024},
-            java_script_enabled=True,
-        )
-        page = await context.new_page()
+            # Create a browser context with the desired viewport.
+            context = await browser.new_context(
+                viewport={"width": 1280, "height": 1024},
+                java_script_enabled=True,
+            )
+            page = await context.new_page()
 
-        # ------------------------------------------------------------------
-        # Build the Selenium‑compatible shim and hand it to BrowserContext.
-        # ------------------------------------------------------------------
-        shim = SeleniumLikeBrowser(
-            browser=self._browser,   # the Playwright Browser we just launched
-            context=context,
-            page=page,
-        )
+            # ------------------------------------------------------------------
+            # Build the Selenium‑compatible shim and hand it to BrowserContext.
+            # ------------------------------------------------------------------
+            shim = SeleniumLikeBrowser(
+                browser=browser,   # the Playwright Browser we just launched
+                context=context,
+                page=page,
+            )
 
-        # Return the BrowserContext that now receives the shim.
-        ctx = BrowserContext(driver=shim, config=self._config)
+            # Save references only after successful launch
+            self._playwright = pw
+            self._browser = browser
 
-        # ----------------------- Prometheus metrics -----------------------
-        BROWSER_CREATION_TOTAL.inc()
-        BROWSER_POOL_SIZE.set(
-            self._available.qsize() + len(self._active) + 1
-        )
-        # ------------------------------------------------------------------
+            # Return the BrowserContext that now receives the shim.
+            ctx = BrowserContext(driver=shim, config=self._config)
 
-        return ctx
+            # ----------------------- Prometheus metrics -----------------------
+            BROWSER_CREATION_TOTAL.inc()
+            BROWSER_POOL_SIZE.set(
+                self._available.qsize() + len(self._active) + 1
+            )
+            # ------------------------------------------------------------------
+
+            return ctx
+        except Exception:
+            BROWSER_FAILURES.inc()
+            if browser:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+            await pw.stop()
+            raise
 
     async def get_browser(self) -> BrowserContext:
         """Acquire a browser from the pool, creating one if necessary."""
@@ -735,7 +753,7 @@ class BrowserPool:
 
             # Quick health check – if the session is dead we recreate later
             try:
-                ctx.browser.title  # simple ping
+                await ctx.browser.title  # simple ping
                 await self._available.put(ctx)
                 logger.debug(f"Browser {browser_id} returned to pool")
             except Exception as exc:  # pylint: disable=broad-except
@@ -747,7 +765,7 @@ class BrowserPool:
     async def _destroy_browser(self, ctx: BrowserContext):
         """Force‑close a Selenium‑like driver."""
         try:
-            await asyncio.get_event_loop().run_in_executor(None, ctx.browser.quit)
+            await ctx.browser.quit()
             logger.info(f"Destroyed browser {id(ctx)}")
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning(f"Error destroying browser {id(ctx)}: {exc}")
